@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/botjoker/botjoker-step2pay-bus-tg/internal/storage"
+	"github.com/botjoker/sambacrm-business-tg/internal/storage"
 	"github.com/sashabaranov/go-openai"
 )
 
