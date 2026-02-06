@@ -1,0 +1,36 @@
+# Игнорируем ненужные файлы для Docker
+.git
+.github
+.env
+.env.example
+*.md
+*.txt
+.gitignore
+.dockerignore
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/vendor/
+/tmp/
+main
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+secrets/*.txt
+!secrets/.gitkeep
