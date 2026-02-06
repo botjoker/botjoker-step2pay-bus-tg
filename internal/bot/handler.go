@@ -38,7 +38,9 @@ func NewMessageHandler(pool *pgxpool.Pool, queries *storage.Queries, config stor
 // HandleStart обрабатывает команду /start
 func (h *MessageHandler) HandleStart(c tele.Context) error {
 	ctx := context.Background()
-
+	
+	log.Printf("📨 Получена команда /start от пользователя %d", c.Sender().ID)
+	
 	// Логируем сообщение
 	h.logMessage(ctx, c, false)
 
@@ -49,8 +51,11 @@ func (h *MessageHandler) HandleStart(c tele.Context) error {
 	}
 
 	if err := c.Send(msg); err != nil {
+		log.Printf("❌ Ошибка отправки сообщения: %v", err)
 		return err
 	}
+	
+	log.Printf("✅ Отправлен welcome message пользователю %d", c.Sender().ID)
 
 	// Логируем ответ
 	h.logMessage(ctx, c, true)
@@ -78,6 +83,9 @@ func (h *MessageHandler) HandleHelp(c tele.Context) error {
 // HandleText обрабатывает любое текстовое сообщение
 func (h *MessageHandler) HandleText(c tele.Context) error {
 	ctx := context.Background()
+	
+	log.Printf("📨 Получено текстовое сообщение от пользователя %d: %s", c.Sender().ID, c.Text())
+	
 	h.logMessage(ctx, c, false)
 
 	userMessage := c.Text()
@@ -87,6 +95,7 @@ func (h *MessageHandler) HandleText(c tele.Context) error {
 
 	// 2. Если AI включен - генерируем ответ
 	if h.botConfig.AiEnabled && h.aiClient != nil {
+		log.Printf("🤖 AI включен, генерируем ответ...")
 		response, err := h.generateAIResponse(ctx, c, userMessage)
 		if err != nil {
 			log.Printf("AI error: %v", err)
