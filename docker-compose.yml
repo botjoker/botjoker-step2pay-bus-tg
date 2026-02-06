@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  telegram-bot:
+    build: .
+    container_name: telegram-bot-service
+    restart: unless-stopped
+    env_file:
+      - .env
+    secrets:
+      - redis_password
+    environment:
+      - REDIS_PASSWORD_FILE=/run/secrets/redis_password
+    networks:
+      - sambacrm
+
+secrets:
+  redis_password:
+    file: ./secrets/redis_password.txt
+
+networks:
+  sambacrm:
+    external: true

@@ -1,0 +1,31 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/telegram-bot-service
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Env
+.env
+
+# Secrets
+secrets/*.txt
+!secrets/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
