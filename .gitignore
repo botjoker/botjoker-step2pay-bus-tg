@@ -5,7 +5,7 @@
 *.so
 *.dylib
 /bin/
-/telegram-bot-service
+/sambacrm-business-tg
 
 # Test binary
 *.test

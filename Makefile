@@ -7,7 +7,7 @@ run: ## Запустить приложение
 	go run cmd/bot/main.go
 
 build: ## Собрать бинарник
-	go build -o bin/telegram-bot-service cmd/bot/main.go
+	go build -o bin/sambacrm-business-tg cmd/bot/main.go
 
 test: ## Запустить тесты
 	go test -v ./...
@@ -19,7 +19,7 @@ clean: ## Удалить бинарники
 	rm -rf bin/
 
 docker-build: ## Собрать Docker образ
-	docker build -t telegram-bot-service:latest .
+	docker build -t sambacrm-business-tg:latest .
 
 docker-up: ## Запустить через docker-compose
 	docker-compose up -d

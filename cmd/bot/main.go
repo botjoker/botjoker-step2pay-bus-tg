@@ -7,9 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/botjoker/telegram-bot-service/internal/bot"
-	"github.com/botjoker/telegram-bot-service/internal/storage"
-	"github.com/botjoker/telegram-bot-service/pkg/utils"
+	"github.com/botjoker/sambacrm-business-tg/internal/bot"
+	"github.com/botjoker/sambacrm-business-tg/internal/storage"
+	"github.com/botjoker/sambacrm-business-tg/pkg/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )

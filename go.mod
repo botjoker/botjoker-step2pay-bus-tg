@@ -1,4 +1,4 @@
-module github.com/botjoker/telegram-bot-service
+module github.com/botjoker/sambacrm-business-tg
 
 go 1.23.0
 

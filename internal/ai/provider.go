@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/botjoker/telegram-bot-service/internal/storage"
+	"github.com/botjoker/botjoker-step2pay-bus-tg/internal/storage"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -43,7 +43,7 @@ type OpenAIProvider struct {
 func NewOpenAIProvider(config storage.TelegramBot) *OpenAIProvider {
 	// API ключ из env переменной (credentials будем подключать позже)
 	apiKey := os.Getenv("OPENAI_API_KEY")
-	
+
 	client := openai.NewClient(apiKey)
 
 	model := "gpt-4"

@@ -49,7 +49,7 @@ jobs:
 
       # 6. Сборка Docker-образа с пробросом секретов
       - name: Build Docker image
-        working-directory: ./telegram-bot-service
+        working-directory: ./sambacrm-business-tg
         run: |
           docker build \
             --build-arg DATABASE_URL=${{ secrets.DATABASE_URL }} \

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/botjoker/telegram-bot-service/internal/ai"
-	"github.com/botjoker/telegram-bot-service/internal/storage"
+	"github.com/botjoker/sambacrm-business-tg/internal/ai"
+	"github.com/botjoker/sambacrm-business-tg/internal/storage"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	tele "gopkg.in/telebot.v3"

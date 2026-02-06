@@ -20,7 +20,7 @@ RUN go mod download
 COPY . .
 
 # Собираем приложение
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o telegram-bot-service ./cmd/bot
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sambacrm-business-tg ./cmd/bot
 
 # Финальный образ
 FROM alpine:latest
@@ -31,7 +31,7 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /root/
 
 # Копируем бинарник
-COPY --from=builder /app/telegram-bot-service .
+COPY --from=builder /app/sambacrm-business-tg .
 
 # Переменные окружения (можно переопределить при запуске)
 ENV DATABASE_URL=${DATABASE_URL}
@@ -41,4 +41,4 @@ ENV REDIS_USER=${REDIS_USER}
 ENV REDIS_PASSWORD=${REDIS_PASSWORD}
 
 # Запуск
-CMD ["./telegram-bot-service"]
+CMD ["./sambacrm-business-tg"]

@@ -6,7 +6,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/botjoker/telegram-bot-service/internal/storage"
+	"github.com/botjoker/sambacrm-business-tg/internal/storage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	tele "gopkg.in/telebot.v3"
@@ -72,7 +72,7 @@ func (m *Manager) StartBot(parentCtx context.Context, config storage.TelegramBot
 	// Конвертируем UUID из pgtype.UUID в uuid.UUID
 	var botID uuid.UUID
 	copy(botID[:], config.ID.Bytes[:])
-	
+
 	// Проверяем что бот еще не запущен
 	if _, exists := m.bots[botID]; exists {
 		return fmt.Errorf("bot %s already running", botID)
