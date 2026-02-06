@@ -39,7 +39,7 @@ func NewMessageHandler(pool *pgxpool.Pool, queries *storage.Queries, config stor
 func (h *MessageHandler) HandleStart(c tele.Context) error {
 	ctx := context.Background()
 	
-	log.Printf("📨 Получена команда /start от пользователя %d", c.Sender().ID)
+	log.Printf("📨 /start от пользователя %d", c.Sender().ID)
 	
 	// Логируем сообщение
 	h.logMessage(ctx, c, false)
@@ -51,17 +51,15 @@ func (h *MessageHandler) HandleStart(c tele.Context) error {
 	}
 
 	if err := c.Send(msg); err != nil {
-		log.Printf("❌ Ошибка отправки сообщения: %v", err)
+		log.Printf("❌ Ошибка отправки: %v", err)
 		return err
 	}
-	
-	log.Printf("✅ Отправлен welcome message пользователю %d", c.Sender().ID)
 
 	// Логируем ответ
 	h.logMessage(ctx, c, true)
 
-	// Запускаем workflow если есть триггер на команду /start
-	go h.executeWorkflowsForCommand(ctx, c, "/start")
+	// Ищем и выполняем workflows с триггером /start
+	h.executeWorkflowsForCommand(ctx, c, "/start")
 
 	return nil
 }
@@ -84,7 +82,7 @@ func (h *MessageHandler) HandleHelp(c tele.Context) error {
 func (h *MessageHandler) HandleText(c tele.Context) error {
 	ctx := context.Background()
 	
-	log.Printf("📨 Получено текстовое сообщение от пользователя %d: %s", c.Sender().ID, c.Text())
+	log.Printf("📨 Текст от %d: %s", c.Sender().ID, c.Text())
 	
 	h.logMessage(ctx, c, false)
 
@@ -95,7 +93,6 @@ func (h *MessageHandler) HandleText(c tele.Context) error {
 
 	// 2. Если AI включен - генерируем ответ
 	if h.botConfig.AiEnabled && h.aiClient != nil {
-		log.Printf("🤖 AI включен, генерируем ответ...")
 		response, err := h.generateAIResponse(ctx, c, userMessage)
 		if err != nil {
 			log.Printf("AI error: %v", err)
@@ -135,11 +132,9 @@ func (h *MessageHandler) executeWorkflowsForCommand(ctx context.Context, c tele.
 	// Загружаем workflows привязанные к этому боту
 	workflows, err := h.queries.GetActiveWorkflowsByBot(ctx, h.botConfig.ID)
 	if err != nil {
-		log.Printf("Failed to load workflows for bot: %v", err)
+		log.Printf("Ошибка загрузки workflows: %v", err)
 		return
 	}
-
-	log.Printf("🔍 Найдено %d активных workflows для бота", len(workflows))
 
 	for _, wf := range workflows {
 		if wf.TriggerType == "command" {
@@ -148,18 +143,48 @@ func (h *MessageHandler) executeWorkflowsForCommand(ctx context.Context, c tele.
 			if wf.TriggerConfig != nil {
 				if err := json.Unmarshal(wf.TriggerConfig, &triggerConfig); err == nil {
 					if cmd, ok := triggerConfig["command"].(string); ok && cmd == command {
-						log.Printf("▶️  Запускаем workflow %s для команды %s", wf.WorkflowName, command)
-						// Простая реакция - отправляем описание workflow
-						message := fmt.Sprintf("✅ Workflow '%s' запущен", wf.WorkflowName)
-						if wf.Description.Valid {
-							message = wf.Description.String
-						}
-						c.Send(message)
+						log.Printf("▶️ Workflow '%s' сработал на %s", wf.WorkflowName, command)
+						
+						// Загружаем узлы и связи
+						nodes, _ := h.queries.GetWorkflowNodes(ctx, wf.ID)
+						edges, _ := h.queries.GetWorkflowEdges(ctx, wf.ID)
+						
+						// Формируем текстовое описание цепочки
+						chainText := h.buildWorkflowChainText(&wf, nodes, edges)
+						c.Send(chainText)
 					}
 				}
 			}
 		}
 	}
+}
+
+// buildWorkflowChainText строит текстовое представление цепочки workflow
+func (h *MessageHandler) buildWorkflowChainText(wf *storage.GetActiveWorkflowsByBotRow, nodes []storage.GetWorkflowNodesRow, edges []storage.TelegramWorkflowEdge) string {
+	result := fmt.Sprintf("📋 Workflow: %s\n", wf.WorkflowName)
+	if wf.Description.Valid {
+		result += fmt.Sprintf("%s\n", wf.Description.String)
+	}
+	result += "\n🔗 Цепочка выполнения:\n\n"
+	
+	if len(nodes) == 0 {
+		return result + "⚠️ Узлы не настроены"
+	}
+	
+	// Простой список узлов
+	for i, node := range nodes {
+		nodeLabel := node.NodeType
+		if node.NodeLabel.Valid {
+			nodeLabel = node.NodeLabel.String
+		}
+		result += fmt.Sprintf("%d. [%s] %s\n", i+1, node.NodeType, nodeLabel)
+	}
+	
+	if len(edges) > 0 {
+		result += fmt.Sprintf("\n🔗 Связей: %d\n", len(edges))
+	}
+	
+	return result
 }
 
 // executeWorkflowsForMessage выполняет workflow с триггером на сообщения

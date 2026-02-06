@@ -112,13 +112,10 @@ func (m *Manager) StartBot(parentCtx context.Context, config storage.TelegramBot
 
 	// Регистрируем обработчики
 	instance.registerHandlers()
-	log.Printf("📝 Обработчики зарегистрированы для бота %s", botID)
 
 	// Запускаем в отдельной горутине
 	go func() {
-		log.Printf("🚀 Запуск Long Polling для бота %s...", botID)
 		bot.Start()
-		log.Printf("⏸️  Long Polling остановлен для бота %s", botID)
 		<-ctx.Done()
 		bot.Stop()
 	}()
