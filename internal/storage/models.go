@@ -472,7 +472,6 @@ type EventRegistration struct {
 	ProfileID       pgtype.UUID        `json:"profile_id"`
 	EventID         pgtype.UUID        `json:"event_id"`
 	CustomerID      pgtype.UUID        `json:"customer_id"`
-	TicketOrderID   pgtype.UUID        `json:"ticket_order_id"`
 	Name            string             `json:"name"`
 	Email           pgtype.Text        `json:"email"`
 	Phone           pgtype.Text        `json:"phone"`
