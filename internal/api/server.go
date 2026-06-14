@@ -7,6 +7,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/botjoker/sambacrm-business-tg/internal/storage"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -28,8 +30,17 @@ type Server struct {
 	sse            *SSEHub
 	internalSecret string // INTERNAL_JWT_SECRET (HS256)
 
+	webhooks  map[string]WebhookFunc // transport ("telegram"/...) → async-обработчик
+	vkWebhook VKWebhookFunc          // VK требует синхронный plain-text ответ
+
 	srv *http.Server
 }
+
+// WebhookFunc обрабатывает сырой payload вебхука транспорта (async, ответ 200/JSON).
+type WebhookFunc func(ctx context.Context, channelID uuid.UUID, body []byte) error
+
+// VKWebhookFunc — синхронный обработчик VK Callback API (возвращает текст-ответ).
+type VKWebhookFunc func(ctx context.Context, channelID uuid.UUID, body []byte) (string, error)
 
 // NewServer создаёт сервер. rdb может быть nil (тогда SSE недоступен).
 func NewServer(rt *runtime.Runtime, pool *pgxpool.Pool, q *storage.Queries) *Server {
@@ -43,6 +54,17 @@ func NewServer(rt *runtime.Runtime, pool *pgxpool.Pool, q *storage.Queries) *Ser
 
 // SetEngine подключает реализацию Engine (из agentstore, при сборке сервиса).
 func (s *Server) SetEngine(e Engine) { s.engine = e }
+
+// SetWebhookHandler регистрирует async-обработчик вебхуков для транспорта.
+func (s *Server) SetWebhookHandler(transport string, fn WebhookFunc) {
+	if s.webhooks == nil {
+		s.webhooks = map[string]WebhookFunc{}
+	}
+	s.webhooks[transport] = fn
+}
+
+// SetVKWebhookHandler регистрирует синхронный VK Callback-обработчик.
+func (s *Server) SetVKWebhookHandler(fn VKWebhookFunc) { s.vkWebhook = fn }
 
 // SetRedis подключает Redis для SSE.
 func (s *Server) SetRedis(rdb *redis.Client) { s.sse = NewSSEHub(rdb) }
@@ -63,11 +85,10 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /internal/operator-message", s.internalJWTRequired(s.handleOperatorMessage))
 	mux.HandleFunc("POST /internal/auth/refresh", s.handleAuthRefresh)
 
-	// Webhooks от транспортов (полная реализация — Phase 6).
-	mux.HandleFunc("POST /webhook/telegram/{cid}", s.handleWebhookStub)
-	mux.HandleFunc("POST /webhook/vk/{cid}", s.handleWebhookStub)
-	mux.HandleFunc("POST /webhook/max/{cid}", s.handleWebhookStub)
-	mux.HandleFunc("POST /webhook/avito/{cid}", s.handleWebhookStub)
+	// VK Callback — синхронный plain-text ответ (более специфичный маршрут).
+	mux.HandleFunc("POST /webhook/vk/{cid}", s.handleVKWebhook)
+	// Остальные транспорты: общий async-маршрут.
+	mux.HandleFunc("POST /webhook/{transport}/{cid}", s.handleWebhook)
 
 	mux.HandleFunc("GET /widget.js", s.handleWidgetJS)
 
@@ -99,14 +120,63 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleWidgetJS(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/javascript")
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("// SambaCRM agent widget — bundle реализуется в шаге 075\n"))
+	_, _ = w.Write(widgetJS)
 }
 
-func (s *Server) handleWebhookStub(w http.ResponseWriter, r *http.Request) {
-	slog.Info("webhook received (stub)", "path", r.URL.Path, "cid", r.PathValue("cid"))
+func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	transport := r.PathValue("transport")
+	cid, err := uuid.Parse(r.PathValue("cid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad channel id")
+		return
+	}
+	fn := s.webhooks[transport]
+	if fn == nil {
+		// транспорт не подключён — принимаем и игнорируем (200, чтобы транспорт не ретраил).
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body")
+		return
+	}
+	go func() {
+		if err := fn(context.Background(), cid, body); err != nil {
+			slog.Error("webhook handler", "transport", transport, "err", err)
+		}
+	}()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
+}
+
+// handleVKWebhook — синхронный: VK ждёт plain-text "ok" или confirmation-код.
+func (s *Server) handleVKWebhook(w http.ResponseWriter, r *http.Request) {
+	cid, err := uuid.Parse(r.PathValue("cid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad channel id")
+		return
+	}
+	if s.vkWebhook == nil {
+		_, _ = w.Write([]byte("ok"))
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body")
+		return
+	}
+	resp, err := s.vkWebhook(r.Context(), cid, body)
+	if err != nil {
+		slog.Error("vk webhook", "err", err)
+		_, _ = w.Write([]byte("ok"))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	_, _ = w.Write([]byte(resp))
 }
 
 // --- helpers ---

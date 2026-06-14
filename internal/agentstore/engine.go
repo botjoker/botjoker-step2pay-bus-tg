@@ -104,6 +104,98 @@ func (e *Engine) Test(ctx context.Context, agentID uuid.UUID, message string) (<
 	return agent.Run(ctx, runtime.RunRequest{ConversationID: uuid.New(), UserMessage: message})
 }
 
+// StartChannelConversation резолвит канал по id и возвращает/создаёт диалог
+// для внешнего пользователя транспорта (Telegram/VK/...).
+func (e *Engine) StartChannelConversation(ctx context.Context, channelID uuid.UUID, externalUserID, externalChatID string) (convID, agentID, profileID uuid.UUID, err error) {
+	ch, err := e.q.GetChannel(ctx, toUUID(channelID))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, uuid.Nil, err
+	}
+	conv, err := e.q.GetAgentConversationByExternal(ctx, storage.GetAgentConversationByExternalParams{
+		AgentID:        ch.AgentID,
+		ChannelID:      ch.ID,
+		ExternalUserID: externalUserID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		conv, err = e.q.CreateAgentConversation(ctx, storage.CreateAgentConversationParams{
+			ProfileID:      ch.ProfileID,
+			AgentID:        ch.AgentID,
+			ChannelID:      ch.ID,
+			ExternalUserID: externalUserID,
+			ExternalChatID: toText(externalChatID),
+		})
+	}
+	if err != nil {
+		return uuid.Nil, uuid.Nil, uuid.Nil, err
+	}
+	return fromUUID(conv.ID), fromUUID(conv.AgentID), fromUUID(conv.ProfileID), nil
+}
+
+// RunConversation строит агента для диалога и возвращает поток событий
+// (транспорт сам стримит его пользователю).
+func (e *Engine) RunConversation(ctx context.Context, convID uuid.UUID, text string, attachments []llm.Attachment) (<-chan llm.StreamEvent, error) {
+	conv, err := e.q.GetAgentConversation(ctx, toUUID(convID))
+	if err != nil {
+		return nil, err
+	}
+	agent, err := e.buildAgent(ctx, fromUUID(conv.AgentID))
+	if err != nil {
+		return nil, err
+	}
+	return agent.Run(ctx, runtime.RunRequest{ConversationID: convID, UserMessage: text, Attachments: attachments})
+}
+
+// ChannelInfo — канал транспорта с расшифрованным токеном.
+type ChannelInfo struct {
+	ChannelID uuid.UUID
+	Token     string
+}
+
+// VKChannelInfo — VK-канал с токеном/секретом/группой.
+type VKChannelInfo struct {
+	ChannelID   uuid.UUID
+	AccessToken string
+	SecretKey   string
+	GroupID     int64
+}
+
+// ListVKChannels возвращает активные VK-каналы.
+// TODO: vk_access_token/vk_secret_key зашифрованы — расшифровать AGENT_SECRETS_KEY.
+func (e *Engine) ListVKChannels(ctx context.Context) ([]VKChannelInfo, error) {
+	rows, err := e.q.ListActiveChannelsByType(ctx, "vk")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]VKChannelInfo, 0, len(rows))
+	for _, ch := range rows {
+		info := VKChannelInfo{
+			ChannelID:   fromUUID(ch.ID),
+			AccessToken: fromText(ch.VkAccessToken),
+			SecretKey:   fromText(ch.VkSecretKey),
+		}
+		if ch.VkGroupID.Valid {
+			info.GroupID = ch.VkGroupID.Int64
+		}
+		out = append(out, info)
+	}
+	return out, nil
+}
+
+// ListTelegramChannels возвращает активные Telegram-каналы.
+// TODO: tg_bot_token хранится зашифрованным (XChaCha20) — расшифровать ключом
+// AGENT_SECRETS_KEY (как backend utils/crypto.rs). Пока возвращаем как есть.
+func (e *Engine) ListTelegramChannels(ctx context.Context) ([]ChannelInfo, error) {
+	rows, err := e.q.ListActiveChannelsByType(ctx, "telegram")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ChannelInfo, 0, len(rows))
+	for _, ch := range rows {
+		out = append(out, ChannelInfo{ChannelID: fromUUID(ch.ID), Token: fromText(ch.TgBotToken)})
+	}
+	return out, nil
+}
+
 // TriggerIngest проксирует к инжектированному триггеру.
 func (e *Engine) TriggerIngest(ctx context.Context, sourceID, profileID uuid.UUID) error {
 	if e.ingest == nil {

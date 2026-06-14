@@ -291,6 +291,21 @@ SELECT * FROM agent_takeovers
 WHERE conversation_id = $1 AND ended_at IS NULL
 LIMIT 1;
 
+-- ============================================================
+-- OUTREACH / CITATIONS (local tools 084)
+-- ============================================================
+
+-- name: InsertScheduledOutreach :one
+INSERT INTO agent_scheduled_outreach
+  (profile_id, conversation_id, agent_id, trigger_type, scheduled_for, message_hint)
+VALUES ($1, $2, $3, 'tool_call', $4, $5)
+RETURNING id;
+
+-- name: AppendMessageCitation :exec
+UPDATE agent_messages
+SET citations = COALESCE(citations, '[]'::jsonb) || $2::jsonb
+WHERE id = $1;
+
 -- name: EndTakeover :exec
 UPDATE agent_takeovers
 SET ended_at = NOW()
@@ -318,4 +333,80 @@ WHERE id = $1;
 -- name: GetCurrentUsage :one
 SELECT * FROM agent_billing_usage
 WHERE profile_id = $1 AND period_start = date_trunc('month', NOW())::date
+LIMIT 1;
+
+-- ============================================================
+-- INSIGHTS (post-conversation tagging, 092/093)
+-- ============================================================
+
+-- name: ListDueForInsights :many
+-- Диалоги без активности > 30 мин и ещё без insights.
+SELECT c.id, c.profile_id
+FROM agent_conversations c
+LEFT JOIN agent_conversation_insights i ON i.conversation_id = c.id
+WHERE i.id IS NULL
+  AND c.last_message_at < NOW() - INTERVAL '30 minutes'
+ORDER BY c.last_message_at ASC
+LIMIT $1;
+
+-- name: UpsertInsights :exec
+INSERT INTO agent_conversation_insights
+  (profile_id, conversation_id, tags, sentiment, sentiment_confidence,
+   primary_intent, secondary_intents, topics, short_summary, long_summary,
+   contact_extracted, next_step_suggestion, converted, conversion_tool, llm_model)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+ON CONFLICT (conversation_id) DO UPDATE SET
+  tags = EXCLUDED.tags,
+  sentiment = EXCLUDED.sentiment,
+  sentiment_confidence = EXCLUDED.sentiment_confidence,
+  primary_intent = EXCLUDED.primary_intent,
+  secondary_intents = EXCLUDED.secondary_intents,
+  topics = EXCLUDED.topics,
+  short_summary = EXCLUDED.short_summary,
+  long_summary = EXCLUDED.long_summary,
+  contact_extracted = EXCLUDED.contact_extracted,
+  next_step_suggestion = EXCLUDED.next_step_suggestion,
+  converted = EXCLUDED.converted,
+  conversion_tool = EXCLUDED.conversion_tool,
+  llm_model = EXCLUDED.llm_model,
+  generated_at = NOW();
+
+-- name: ListInsightsForDigest :many
+-- Insights тенанта за период (для weekly digest, 093).
+SELECT tags, sentiment, primary_intent, topics, converted, short_summary
+FROM agent_conversation_insights
+WHERE profile_id = sqlc.arg(profile_id)
+  AND generated_at >= sqlc.arg(period_from)
+  AND generated_at < sqlc.arg(period_to);
+
+-- name: ListAgentProfileIds :many
+-- Тенанты с хотя бы одним агентом (для планирования дайджестов).
+SELECT DISTINCT profile_id FROM agents WHERE is_deleted = false;
+
+-- name: InsertDigest :exec
+INSERT INTO agent_insight_digests
+  (profile_id, agent_id, period_start, period_end, metrics, insights)
+VALUES ($1, $2, $3, $4, $5, $6);
+
+-- ============================================================
+-- FEW-SHOT (101 — promoted feedback в system prompt)
+-- ============================================================
+
+-- name: ListPromotedFeedback :many
+SELECT message_id, correction
+FROM agent_feedback
+WHERE agent_id = $1 AND promoted_to_few_shot = true
+ORDER BY promoted_at DESC NULLS LAST
+LIMIT $2;
+
+-- name: GetMessageBrief :one
+SELECT content, conversation_id, created_at
+FROM agent_messages WHERE id = $1;
+
+-- name: GetPrecedingUserMessage :one
+SELECT content FROM agent_messages
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND role = 'user'
+  AND created_at < sqlc.arg(before)
+ORDER BY created_at DESC
 LIMIT 1;

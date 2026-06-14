@@ -7,6 +7,7 @@ import (
 
 	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/botjoker/sambacrm-business-tg/internal/storage"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -21,6 +22,10 @@ func (r *DBToolRegistry) execLocal(ctx context.Context, ec runtime.ToolExecCtx, 
 		return r.getIntakeStatus(ctx, ec)
 	case "get_current_time":
 		return map[string]any{"now": time.Now().Format(time.RFC3339), "weekday": time.Now().Weekday().String()}, nil
+	case "schedule_followup":
+		return r.scheduleFollowup(ctx, ec, args)
+	case "cite_source":
+		return r.citeSource(ctx, ec, args)
 	case "request_human_handover":
 		reason, _ := args["reason"].(string)
 		if reason == "" {
@@ -143,6 +148,52 @@ func (r *DBToolRegistry) remainingRequired(ctx context.Context, ec runtime.ToolE
 		}
 	}
 	return out
+}
+
+// scheduleFollowup ставит отложенное сообщение в agent_scheduled_outreach.
+func (r *DBToolRegistry) scheduleFollowup(ctx context.Context, ec runtime.ToolExecCtx, args map[string]any) (map[string]any, error) {
+	whenStr, _ := args["when"].(string)
+	hint, _ := args["message_to_user"].(string)
+	when, err := time.Parse(time.RFC3339, whenStr)
+	if err != nil {
+		return map[string]any{"error": "when must be RFC3339"}, nil
+	}
+
+	id, err := r.q.InsertScheduledOutreach(ctx, storage.InsertScheduledOutreachParams{
+		ProfileID:      toUUID(ec.ProfileID),
+		ConversationID: toUUID(ec.ConversationID),
+		AgentID:        toUUID(ec.AgentID),
+		ScheduledFor:   pgtype.Timestamptz{Time: when, Valid: true},
+		MessageHint:    toText(hint),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"status":        "scheduled",
+		"id":            fromUUID(id),
+		"scheduled_for": when.Format(time.RFC3339),
+		"message":       "Хорошо, напишу вам в указанное время.",
+	}, nil
+}
+
+// citeSource добавляет цитату источника к текущему assistant-сообщению.
+func (r *DBToolRegistry) citeSource(ctx context.Context, ec runtime.ToolExecCtx, args map[string]any) (map[string]any, error) {
+	if ec.MessageID == uuid.Nil {
+		return map[string]any{"status": "skipped", "reason": "no message context"}, nil
+	}
+	citation := map[string]any{
+		"source_id": args["source_id"],
+		"quote":     args["quote"],
+	}
+	payload, _ := json.Marshal([]any{citation})
+	if err := r.q.AppendMessageCitation(ctx, storage.AppendMessageCitationParams{
+		ID:      toUUID(ec.MessageID),
+		Column2: payload,
+	}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"status": "cited"}, nil
 }
 
 func confidenceArg(args map[string]any) float64 {

@@ -75,7 +75,7 @@ type antMsg struct {
 }
 
 type antBlock struct {
-	Type string `json:"type"` // "text" | "tool_use" | "tool_result"
+	Type string `json:"type"` // "text" | "tool_use" | "tool_result" | "image"
 	// text
 	Text string `json:"text,omitempty"`
 	// tool_use
@@ -85,6 +85,16 @@ type antBlock struct {
 	// tool_result
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   string `json:"content,omitempty"`
+	// image
+	Source *antSource `json:"source,omitempty"`
+}
+
+// antSource — источник изображения (url или base64).
+type antSource struct {
+	Type      string `json:"type"` // "url" | "base64"
+	URL       string `json:"url,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
 }
 
 type antToolDef struct {
@@ -135,10 +145,19 @@ func (a *Anthropic) buildRequest(model string, msgs []Message, tools []ToolDef, 
 			}
 			antMsgs = append(antMsgs, antMsg{Role: "assistant", Content: blocks})
 		default: // user
-			antMsgs = append(antMsgs, antMsg{
-				Role:    "user",
-				Content: []antBlock{{Type: "text", Text: m.Content}},
-			})
+			blocks := make([]antBlock, 0, len(m.Attachments)+1)
+			if m.Content != "" {
+				blocks = append(blocks, antBlock{Type: "text", Text: m.Content})
+			}
+			for _, a := range m.Attachments {
+				if a.Type == "image" && a.URL != "" {
+					blocks = append(blocks, antBlock{Type: "image", Source: &antSource{Type: "url", URL: a.URL}})
+				}
+			}
+			if len(blocks) == 0 {
+				blocks = append(blocks, antBlock{Type: "text", Text: m.Content})
+			}
+			antMsgs = append(antMsgs, antMsg{Role: "user", Content: blocks})
 		}
 	}
 

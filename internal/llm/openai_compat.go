@@ -69,10 +69,30 @@ func (o *openAICompatible) SupportsTools() bool  { return o.supportsTools }
 
 type oaMsg struct {
 	Role       string       `json:"role"`
-	Content    string       `json:"content"`
+	Content    any          `json:"content"` // string или []part (для vision)
 	ToolCalls  []oaToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string       `json:"tool_call_id,omitempty"`
 	Name       string       `json:"name,omitempty"`
+}
+
+// oaContent: строка, либо массив частей (text + image_url) при наличии вложений.
+func oaContent(m Message) any {
+	if len(m.Attachments) == 0 {
+		return m.Content
+	}
+	parts := make([]any, 0, len(m.Attachments)+1)
+	if m.Content != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": m.Content})
+	}
+	for _, a := range m.Attachments {
+		if a.Type == "image" && a.URL != "" {
+			parts = append(parts, map[string]any{
+				"type":      "image_url",
+				"image_url": map[string]any{"url": a.URL},
+			})
+		}
+	}
+	return parts
 }
 
 type oaToolCall struct {
@@ -103,13 +123,14 @@ type oaStreamOptions struct {
 }
 
 type oaReq struct {
-	Model         string           `json:"model"`
-	Messages      []oaMsg          `json:"messages"`
-	Tools         []oaToolDef      `json:"tools,omitempty"`
-	Temperature   float32          `json:"temperature"`
-	MaxTokens     int              `json:"max_tokens,omitempty"`
-	Stream        bool             `json:"stream"`
-	StreamOptions *oaStreamOptions `json:"stream_options,omitempty"`
+	Model          string           `json:"model"`
+	Messages       []oaMsg          `json:"messages"`
+	Tools          []oaToolDef      `json:"tools,omitempty"`
+	Temperature    float32          `json:"temperature"`
+	MaxTokens      int              `json:"max_tokens,omitempty"`
+	Stream         bool             `json:"stream"`
+	StreamOptions  *oaStreamOptions `json:"stream_options,omitempty"`
+	ResponseFormat any              `json:"response_format,omitempty"`
 }
 
 func (o *openAICompatible) buildRequest(model string, msgs []Message, tools []ToolDef, temp float32, maxTok int, stream bool) oaReq {
@@ -118,7 +139,7 @@ func (o *openAICompatible) buildRequest(model string, msgs []Message, tools []To
 	}
 	oaMsgs := make([]oaMsg, 0, len(msgs))
 	for _, m := range msgs {
-		om := oaMsg{Role: string(m.Role), Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
+		om := oaMsg{Role: string(m.Role), Content: oaContent(m), ToolCallID: m.ToolCallID, Name: m.Name}
 		for _, tc := range m.ToolCalls {
 			om.ToolCalls = append(om.ToolCalls, oaToolCall{
 				ID:       tc.ID,
@@ -170,6 +191,9 @@ func (o *openAICompatible) newHTTPRequest(ctx context.Context, body any) (*http.
 
 func (o *openAICompatible) Complete(ctx context.Context, req CompleteRequest) (*CompleteResult, error) {
 	body := o.buildRequest(req.Model, req.Messages, req.Tools, req.Temperature, req.MaxTokens, false)
+	if req.JSONMode {
+		body.ResponseFormat = map[string]any{"type": "json_object"}
+	}
 	httpReq, err := o.newHTTPRequest(ctx, body)
 	if err != nil {
 		return nil, err

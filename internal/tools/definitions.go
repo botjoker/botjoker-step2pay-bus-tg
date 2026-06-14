@@ -26,6 +26,8 @@ var LocalToolNames = map[string]bool{
 	"get_intake_status":      true,
 	"get_current_time":       true,
 	"request_human_handover": true,
+	"schedule_followup":      true,
+	"cite_source":            true,
 }
 
 // Definitions — JSON Schema всех инструментов (для tool-calling LLM).
@@ -106,6 +108,15 @@ var Definitions = map[string]llm.ToolDef{
 			"quote":     str("Цитата"),
 		}, "source_id"),
 	},
+	"analyze_image": {
+		Name:        "analyze_image",
+		Description: "Проанализировать изображение (по media_id или image_url) согласно инструкции.",
+		Schema: obj(map[string]any{
+			"media_id":    str("ID медиа в системе (опц.)"),
+			"image_url":   str("Прямой URL изображения (опц.)"),
+			"instruction": str("Что нужно понять/прочитать на изображении"),
+		}, "instruction"),
+	},
 
 	// --- Локальные (runtime) ---
 	"record_intake_fact": {
@@ -141,5 +152,13 @@ var Definitions = map[string]llm.ToolDef{
 		Schema: obj(map[string]any{
 			"reason": str("Кратко зачем нужен человек"),
 		}),
+	},
+	"schedule_followup": {
+		Name:        "schedule_followup",
+		Description: "Запланировать сообщение пользователю на будущее время (напоминание/follow-up).",
+		Schema: obj(map[string]any{
+			"when":            str("Когда написать, в формате RFC3339 (напр. 2026-06-20T10:00:00Z)"),
+			"message_to_user": str("Что напомнить/написать"),
+		}, "when"),
 	},
 }

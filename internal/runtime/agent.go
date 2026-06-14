@@ -98,8 +98,12 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 	// 7. История диалога.
 	history, _ := a.memory.Load(ctx, convID)
 
-	// 8. Сборка messages.
-	msgs := a.buildMessages(intakeBlock, chunks, fewShot, history, redactedUser, req.Attachments, userLang)
+	// 8. Сборка messages. Вложения пробрасываем только если у агента включено зрение.
+	attach := req.Attachments
+	if !a.cfg.VisionEnabled {
+		attach = nil
+	}
+	msgs := a.buildMessages(intakeBlock, chunks, fewShot, history, redactedUser, attach, userLang)
 
 	// 9. Tool-use loop.
 	tools, _ := a.tools.SchemasFor(ctx, a.cfg.AgentID)

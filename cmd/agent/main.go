@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -19,13 +20,18 @@ import (
 	"github.com/botjoker/sambacrm-business-tg/internal/api"
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
 	"github.com/botjoker/sambacrm-business-tg/internal/pii"
+	"github.com/botjoker/sambacrm-business-tg/internal/queue"
 	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/botjoker/sambacrm-business-tg/internal/storage"
 	"github.com/botjoker/sambacrm-business-tg/internal/tools"
+	"github.com/botjoker/sambacrm-business-tg/internal/transports/telegram"
+	"github.com/botjoker/sambacrm-business-tg/internal/transports/vk"
 	"github.com/botjoker/sambacrm-business-tg/pkg/utils"
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
+	tele "gopkg.in/telebot.v3"
 )
 
 func main() {
@@ -81,6 +87,7 @@ func main() {
 		runtime.WithToolRegistry(toolReg),
 		runtime.WithBilling(billing),
 		runtime.WithPII(piiClient),
+		runtime.WithFewShot(agentstore.NewFewShot(queries)),
 	}
 
 	sink := api.NewSSEHub(rdb)
@@ -96,9 +103,62 @@ func main() {
 
 	engine := agentstore.NewEngine(queries, sink, providerFactory, ingest, opProxy, deps...)
 
+	// Telegram-транспорт: запускаем ботов активных каналов + регистрируем в op-proxy.
+	tgManager := telegram.NewManager(engine)
+	if chans, err := engine.ListTelegramChannels(ctx); err == nil {
+		for _, c := range chans {
+			if err := tgManager.Start(c.ChannelID, c.Token); err != nil {
+				slog.Warn("telegram channel start failed", "channel", c.ChannelID, "err", err)
+			}
+		}
+		slog.Info("telegram channels started", "count", tgManager.Count())
+	} else {
+		slog.Warn("list telegram channels failed", "err", err)
+	}
+	opProxy.Register("telegram", tgManager)
+
+	// VK-транспорт.
+	vkManager := vk.NewManager(engine)
+	if chans, err := engine.ListVKChannels(ctx); err == nil {
+		for _, c := range chans {
+			conf := envOr("VK_CONFIRMATION_"+strconv.FormatInt(c.GroupID, 10), os.Getenv("VK_CONFIRMATION"))
+			if err := vkManager.Start(vk.Channel{
+				ChannelID:    c.ChannelID,
+				AccessToken:  c.AccessToken,
+				SecretKey:    c.SecretKey,
+				Confirmation: conf,
+				GroupID:      c.GroupID,
+			}); err != nil {
+				slog.Warn("vk channel start failed", "channel", c.ChannelID, "err", err)
+			}
+		}
+		slog.Info("vk channels started", "count", vkManager.Count())
+	} else {
+		slog.Warn("list vk channels failed", "err", err)
+	}
+	opProxy.Register("vk", vkManager)
+
+	// Insights pipeline (092) + weekly digest (093): дешёвая модель + Asynq.
+	if cheap, err := buildProvider(envOr("INSIGHTS_PROVIDER", "yandex_gpt"), envOr("INSIGHTS_MODEL", "yandexgpt-lite")); err == nil {
+		model := envOr("INSIGHTS_MODEL", "yandexgpt-lite")
+		insightsSvc := agentstore.NewInsightsService(queries, cheap, model)
+		digestSvc := agentstore.NewDigestService(queries, cheap, model)
+		startInsights(ctx, insightsSvc, digestSvc)
+	} else {
+		slog.Warn("insights disabled (provider build failed)", "err", err)
+	}
+
 	srv := api.NewServer(rt, pool, queries)
 	srv.SetRedis(rdb)
 	srv.SetEngine(engine)
+	srv.SetWebhookHandler("telegram", func(ctx context.Context, channelID uuid.UUID, body []byte) error {
+		var update tele.Update
+		if err := json.Unmarshal(body, &update); err != nil {
+			return err
+		}
+		return tgManager.HandleUpdate(ctx, channelID, &update)
+	})
+	srv.SetVKWebhookHandler(vkManager.HandleCallback)
 
 	addr := envOr("AGENT_HTTP_ADDR", ":8080")
 	go srv.Start(addr)
@@ -111,6 +171,97 @@ func main() {
 	slog.Info("shutting down")
 	srv.Shutdown(context.Background())
 }
+
+// startInsights запускает Asynq-воркеры (insights + weekly digest) и планировщики.
+func startInsights(ctx context.Context, insights *agentstore.InsightsService, digest *agentstore.DigestService) {
+	client, err := queue.NewAsynqClient()
+	if err != nil {
+		slog.Warn("insights: asynq client unavailable", "err", err)
+		return
+	}
+	srv, err := queue.NewAsynqServer()
+	if err != nil {
+		slog.Warn("insights: asynq server unavailable", "err", err)
+		return
+	}
+
+	mux := asynq.NewServeMux()
+	mux.HandleFunc(queue.TypeConversationInsights, func(ctx context.Context, t *asynq.Task) error {
+		p, err := queue.ParseInsightsPayload(t)
+		if err != nil {
+			return err
+		}
+		return insights.Process(ctx, p.ConversationID)
+	})
+	mux.HandleFunc(queue.TypeWeeklyDigest, func(ctx context.Context, t *asynq.Task) error {
+		p, err := queue.ParseWeeklyDigestPayload(t)
+		if err != nil {
+			return err
+		}
+		return digest.GenerateAndStore(ctx, p.ProfileID, nowUTC())
+	})
+	if err := srv.Start(mux); err != nil {
+		slog.Warn("insights: asynq start failed", "err", err)
+		return
+	}
+
+	// Планировщик insights: раз в 5 минут — «остывшие» диалоги.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ids, err := insights.DueConversations(ctx, 50)
+				if err != nil {
+					slog.Warn("insights: due query failed", "err", err)
+					continue
+				}
+				for _, id := range ids {
+					if task, err := queue.NewInsightsTask(id); err == nil {
+						_, _ = client.Enqueue(task)
+					}
+				}
+			}
+		}
+	}()
+
+	// Планировщик дайджестов: проверка раз в час, запуск по понедельникам ~08:00 UTC.
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		lastRun := ""
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := nowUTC()
+				stamp := now.Format("2006-01-02")
+				if now.Weekday() == time.Monday && now.Hour() == 8 && lastRun != stamp {
+					lastRun = stamp
+					pids, err := digest.ProfileIDs(ctx)
+					if err != nil {
+						slog.Warn("digest: profiles query failed", "err", err)
+						continue
+					}
+					for _, pid := range pids {
+						if task, err := queue.NewWeeklyDigestTask(pid); err == nil {
+							_, _ = client.Enqueue(task)
+						}
+					}
+					slog.Info("weekly digests enqueued", "tenants", len(pids))
+				}
+			}
+		}
+	}()
+
+	slog.Info("insights + digest pipeline started")
+}
+
+func nowUTC() time.Time { return time.Now().UTC() }
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
