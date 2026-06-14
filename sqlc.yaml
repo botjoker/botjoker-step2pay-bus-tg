@@ -13,3 +13,12 @@ sql:
         emit_interface: false
         emit_exact_table_names: false
         emit_empty_slices: true
+        overrides:
+          # agents.proactive_quiet_hours_local — TSTZRANGE. pgx/sqlc не знает этот
+          # тип; proactive-фича отложена в V1.1, поэтому маппим в *string и НЕ
+          # селектим эту колонку нигде в runtime-запросах (GetAgent перечисляет
+          # колонки явно, минуя её). Так и модель компилируется, и scan не падает.
+          - column: "agents.proactive_quiet_hours_local"
+            go_type:
+              type: "string"
+              pointer: true

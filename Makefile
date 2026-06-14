@@ -3,11 +3,17 @@
 help: ## Показать помощь
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-run: ## Запустить приложение
+run: ## Запустить telegram-бот (legacy entrypoint)
 	go run cmd/bot/main.go
 
-build: ## Собрать бинарник
+run-agent: ## Запустить AI-agent runtime (Phase 2)
+	go run ./cmd/agent
+
+build: ## Собрать бинарник telegram-бота
 	go build -o bin/sambacrm-business-tg cmd/bot/main.go
+
+build-agent: ## Собрать бинарник agent-runtime
+	CGO_ENABLED=0 go build -o bin/sambacrm-business-agent ./cmd/agent
 
 test: ## Запустить тесты
 	go test -v ./...

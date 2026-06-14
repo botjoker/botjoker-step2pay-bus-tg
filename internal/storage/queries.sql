@@ -101,3 +101,221 @@ INSERT INTO telegram_messages_log (
 ) VALUES (
     gen_random_uuid(), $1, $2, $3, $4, $5, $6, NOW()
 );
+
+-- ============================================================
+-- ============  AGENTS MODULE (Phase 2 runtime)  =============
+-- ============================================================
+-- read-only для runtime; CRUD остаётся в backend (Rust).
+-- ВНИМАНИЕ: agents.proactive_quiet_hours_local (TSTZRANGE) НЕ селектим —
+-- pgx/sqlc не умеет этот тип; proactive отложен в V1.1.
+
+-- name: GetAgent :one
+SELECT id, profile_id, slug, name, description, avatar_media_id,
+       persona, greeting_message, fallback_message, safety_disclaimer,
+       llm_provider, llm_model, llm_credentials_id, llm_temperature,
+       llm_max_tokens, llm_max_iterations,
+       embedding_provider, embedding_model, embedding_credentials_id, embedding_dim,
+       rag_enabled, rag_top_k, rag_min_score,
+       default_language, auto_detect_language, allowed_languages,
+       vision_enabled, vision_model,
+       takeover_enabled, takeover_notify_channel, takeover_notify_target,
+       proactive_enabled,
+       brand_color, brand_logo_media_id, brand_powered_by_hidden,
+       plan_tier, share_facts_across_channels,
+       is_active, is_deleted,
+       created_at, updated_at, created_by, updated_by
+FROM agents
+WHERE id = $1 AND is_deleted = false;
+
+-- name: GetAgentBySlug :one
+SELECT id, profile_id, slug, name, description, avatar_media_id,
+       persona, greeting_message, fallback_message, safety_disclaimer,
+       llm_provider, llm_model, llm_credentials_id, llm_temperature,
+       llm_max_tokens, llm_max_iterations,
+       embedding_provider, embedding_model, embedding_credentials_id, embedding_dim,
+       rag_enabled, rag_top_k, rag_min_score,
+       default_language, auto_detect_language, allowed_languages,
+       vision_enabled, vision_model,
+       takeover_enabled, takeover_notify_channel, takeover_notify_target,
+       proactive_enabled,
+       brand_color, brand_logo_media_id, brand_powered_by_hidden,
+       plan_tier, share_facts_across_channels,
+       is_active, is_deleted,
+       created_at, updated_at, created_by, updated_by
+FROM agents
+WHERE profile_id = $1 AND slug = $2 AND is_deleted = false;
+
+-- ============================================================
+-- AGENT_TOOLS
+-- ============================================================
+
+-- name: ListEnabledTools :many
+SELECT * FROM agent_tools
+WHERE agent_id = $1 AND is_enabled = true;
+
+-- ============================================================
+-- AGENT_CHANNELS
+-- ============================================================
+
+-- name: GetChannel :one
+SELECT * FROM agent_channels
+WHERE id = $1 AND is_deleted = false;
+
+-- name: ListActiveChannelsByType :many
+SELECT * FROM agent_channels
+WHERE channel_type = $1 AND is_active = true AND is_deleted = false;
+
+-- name: GetChannelByWebSlug :one
+SELECT * FROM agent_channels
+WHERE profile_id = $1 AND web_slug = $2 AND is_active = true AND is_deleted = false;
+
+-- name: GetWebChannelBySlug :one
+-- Публичный резолв виджета по slug (web_slug глобально адресуем).
+SELECT * FROM agent_channels
+WHERE web_slug = $1 AND channel_type = 'web' AND is_active = true AND is_deleted = false
+LIMIT 1;
+
+-- ============================================================
+-- AGENT_CONVERSATIONS
+-- ============================================================
+-- get-or-create реализован в Go двумя запросами (надёжнее для sqlc, чем
+-- CTE с UNION ALL + INSERT...RETURNING из исходного плана).
+
+-- name: GetAgentConversation :one
+SELECT * FROM agent_conversations WHERE id = $1;
+
+-- name: GetAgentConversationByExternal :one
+SELECT * FROM agent_conversations
+WHERE agent_id = $1 AND channel_id = $2 AND external_user_id = $3 AND is_active = true
+LIMIT 1;
+
+-- name: CountConversationMessages :one
+SELECT COUNT(*) FROM agent_messages WHERE conversation_id = $1;
+
+-- name: CreateAgentConversation :one
+INSERT INTO agent_conversations
+  (profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING *;
+
+-- name: UpdateConversationContext :exec
+UPDATE agent_conversations
+SET context = context || $2::jsonb, last_message_at = NOW()
+WHERE id = $1;
+
+-- name: UpdateConversationSummary :exec
+UPDATE agent_conversations
+SET summary = $2, last_message_at = NOW()
+WHERE id = $1;
+
+-- name: MarkEscalated :exec
+UPDATE agent_conversations
+SET is_escalated = true, escalated_at = NOW(), escalation_reason = $2
+WHERE id = $1;
+
+-- ============================================================
+-- AGENT_MESSAGES
+-- ============================================================
+
+-- name: InsertMessage :one
+INSERT INTO agent_messages (
+  profile_id, conversation_id, role, content, content_original,
+  tool_calls, tool_call_id, tool_result,
+  retrieved_chunks, citations, attachments, has_image,
+  detected_language, response_language,
+  operator_account_id,
+  redaction_applied, redaction_log,
+  tokens_in, tokens_out, cost_usd, latency_ms,
+  llm_model, llm_provider
+) VALUES (
+  $1,$2,$3,$4,$5, $6,$7,$8, $9,$10,$11,$12, $13,$14, $15,
+  $16,$17, $18,$19,$20,$21, $22,$23
+)
+RETURNING *;
+
+-- name: ListMessagesByConversation :many
+SELECT * FROM agent_messages
+WHERE conversation_id = $1
+ORDER BY created_at ASC
+LIMIT $2 OFFSET $3;
+
+-- name: LastMessages :many
+SELECT * FROM agent_messages
+WHERE conversation_id = $1
+ORDER BY created_at DESC
+LIMIT $2;
+
+-- ============================================================
+-- AGENT_INTAKE_FIELDS + FACTS
+-- ============================================================
+
+-- name: ListIntakeFields :many
+SELECT * FROM agent_intake_fields
+WHERE agent_id = $1 AND is_active = true AND is_deleted = false
+ORDER BY ask_priority;
+
+-- name: ListConversationFacts :many
+SELECT * FROM agent_conversation_facts
+WHERE conversation_id = $1 AND superseded_by IS NULL;
+
+-- name: InsertConversationFact :one
+INSERT INTO agent_conversation_facts
+  (profile_id, conversation_id, intake_field_id, field_key, field_value,
+   confidence, source_message_id, source_excerpt)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+RETURNING *;
+
+-- name: SupersedeFact :exec
+UPDATE agent_conversation_facts
+SET superseded_by = $2
+WHERE id = $1;
+
+-- name: DeactivateActiveFact :exec
+-- Само-вытеснение активного факта по ключу (освобождает partial-unique индекс
+-- перед вставкой нового значения). superseded_by = id → строка перестаёт быть активной.
+UPDATE agent_conversation_facts
+SET superseded_by = id
+WHERE conversation_id = $1 AND field_key = $2 AND superseded_by IS NULL;
+
+-- name: VerifyFact :exec
+UPDATE agent_conversation_facts
+SET is_verified = true, updated_at = NOW()
+WHERE conversation_id = $1 AND field_key = $2 AND superseded_by IS NULL;
+
+-- ============================================================
+-- AGENT_TAKEOVERS
+-- ============================================================
+
+-- name: GetActiveTakeover :one
+SELECT * FROM agent_takeovers
+WHERE conversation_id = $1 AND ended_at IS NULL
+LIMIT 1;
+
+-- name: EndTakeover :exec
+UPDATE agent_takeovers
+SET ended_at = NOW()
+WHERE id = $1;
+
+-- ============================================================
+-- KNOWLEDGE (RAG sidecar пишет chunks напрямую через asyncpg в Python;
+-- runtime только читает source + обновляет статус)
+-- ============================================================
+
+-- name: GetKnowledgeSource :one
+SELECT * FROM agent_knowledge_sources WHERE id = $1;
+
+-- name: UpdateSourceStatus :exec
+UPDATE agent_knowledge_sources
+SET status = $2, error_message = $3, indexed_at = COALESCE($4, indexed_at),
+    chunks_count = COALESCE($5, chunks_count),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- ============================================================
+-- BILLING
+-- ============================================================
+
+-- name: GetCurrentUsage :one
+SELECT * FROM agent_billing_usage
+WHERE profile_id = $1 AND period_start = date_trunc('month', NOW())::date
+LIMIT 1;
