@@ -109,6 +109,11 @@ INSERT INTO telegram_messages_log (
 -- ВНИМАНИЕ: agents.proactive_quiet_hours_local (TSTZRANGE) НЕ селектим —
 -- pgx/sqlc не умеет этот тип; proactive отложен в V1.1.
 
+-- name: GetCredential :one
+-- Кредал тенанта (ключи провайдера, key1/2/3 зашифрованы AGENT_SECRETS_KEY).
+SELECT id, profile_id, credential_type, key1, key2, key3, metadata, is_active
+FROM credentials WHERE id = $1;
+
 -- name: GetAgent :one
 SELECT id, profile_id, slug, name, description, avatar_media_id,
        persona, greeting_message, fallback_message, safety_disclaimer,

@@ -338,7 +338,6 @@ func (q *Queries) GetActiveWorkflowsByProfile(ctx context.Context, profileID pgt
 }
 
 const getAgent = `-- name: GetAgent :one
-
 SELECT id, profile_id, slug, name, description, avatar_media_id,
        persona, greeting_message, fallback_message, safety_disclaimer,
        llm_provider, llm_model, llm_credentials_id, llm_temperature,
@@ -403,12 +402,6 @@ type GetAgentRow struct {
 	UpdatedBy                pgtype.UUID        `json:"updated_by"`
 }
 
-// ============================================================
-// ============  AGENTS MODULE (Phase 2 runtime)  =============
-// ============================================================
-// read-only для runtime; CRUD остаётся в backend (Rust).
-// ВНИМАНИЕ: agents.proactive_quiet_hours_local (TSTZRANGE) НЕ селектим —
-// pgx/sqlc не умеет этот тип; proactive отложен в V1.1.
 func (q *Queries) GetAgent(ctx context.Context, id pgtype.UUID) (GetAgentRow, error) {
 	row := q.db.QueryRow(ctx, getAgent, id)
 	var i GetAgentRow
@@ -804,6 +797,46 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.ChatID,
 		&i.Context,
 		&i.LastMessageAt,
+	)
+	return i, err
+}
+
+const getCredential = `-- name: GetCredential :one
+
+SELECT id, profile_id, credential_type, key1, key2, key3, metadata, is_active
+FROM credentials WHERE id = $1
+`
+
+type GetCredentialRow struct {
+	ID             pgtype.UUID `json:"id"`
+	ProfileID      pgtype.UUID `json:"profile_id"`
+	CredentialType string      `json:"credential_type"`
+	Key1           pgtype.Text `json:"key1"`
+	Key2           pgtype.Text `json:"key2"`
+	Key3           pgtype.Text `json:"key3"`
+	Metadata       []byte      `json:"metadata"`
+	IsActive       bool        `json:"is_active"`
+}
+
+// ============================================================
+// ============  AGENTS MODULE (Phase 2 runtime)  =============
+// ============================================================
+// read-only для runtime; CRUD остаётся в backend (Rust).
+// ВНИМАНИЕ: agents.proactive_quiet_hours_local (TSTZRANGE) НЕ селектим —
+// pgx/sqlc не умеет этот тип; proactive отложен в V1.1.
+// Кредал тенанта (ключи провайдера, key1/2/3 зашифрованы AGENT_SECRETS_KEY).
+func (q *Queries) GetCredential(ctx context.Context, id pgtype.UUID) (GetCredentialRow, error) {
+	row := q.db.QueryRow(ctx, getCredential, id)
+	var i GetCredentialRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.CredentialType,
+		&i.Key1,
+		&i.Key2,
+		&i.Key3,
+		&i.Metadata,
+		&i.IsActive,
 	)
 	return i, err
 }

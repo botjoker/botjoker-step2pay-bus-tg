@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -91,12 +92,26 @@ func main() {
 	}
 
 	sink := api.NewSSEHub(rdb)
+	agentSecretsKey := os.Getenv("AGENT_SECRETS_KEY")
 	providerFactory := func(ctx context.Context, agentID uuid.UUID) (llm.LLMProvider, runtime.AgentConfig, error) {
-		cfg, providerName, model, err := agentstore.LoadAgentConfig(ctx, queries, agentID)
+		cfg, providerName, model, credID, err := agentstore.LoadAgentConfig(ctx, queries, agentID)
 		if err != nil {
 			return nil, runtime.AgentConfig{}, err
 		}
-		prov, err := buildProvider(providerName, model)
+		// LLM-ключи берутся ТОЛЬКО из credentials тенанта (заданы в админке,
+		// шифр AGENT_SECRETS_KEY). Никакого ENV-fallback для агентов.
+		if credID == uuid.Nil {
+			return nil, cfg, fmt.Errorf("agent %s: LLM credential не задан (укажите в админке)", agentID)
+		}
+		if agentSecretsKey == "" {
+			return nil, cfg, fmt.Errorf("AGENT_SECRETS_KEY не сконфигурирован")
+		}
+		creds, err := agentstore.LoadProviderCredentials(ctx, queries, credID, agentSecretsKey, model)
+		if err != nil {
+			return nil, cfg, fmt.Errorf("load tenant credentials: %w", err)
+		}
+		policy := llm.ProfilePolicy{AllowedLLMProviders: []string{providerName}}
+		prov, err := llm.NewProvider(providerName, *creds, policy)
 		return prov, cfg, err
 	}
 	ingest := makeIngestTrigger(envOr("RAG_URL", "http://sambacrm-agent-rag:8000"), jwtFactory)
