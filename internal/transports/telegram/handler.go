@@ -21,6 +21,7 @@ func (m *Manager) HandleUpdate(ctx context.Context, channelID uuid.UUID, update 
 	if !ok {
 		return nil // бот не запущен — игнорируем
 	}
+
 	if update.Message == nil {
 		return nil // MVP: только текстовые сообщения
 	}
