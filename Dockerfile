@@ -33,8 +33,9 @@ RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /root/
 
-# Копируем бинарник
+# Копируем оба бинарника (bot + agent)
 COPY --from=builder /app/sambacrm-business-tg .
+COPY --from=builder /app/sambacrm-business-agent .
 
 # Переменные окружения (можно переопределить при запуске)
 ENV DATABASE_URL=${DATABASE_URL}
