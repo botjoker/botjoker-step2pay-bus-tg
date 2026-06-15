@@ -19,8 +19,11 @@ RUN go mod download
 # Копируем весь код
 COPY . .
 
-# Собираем приложение
+# Собираем оба entrypoint'а в один образ (сервис НЕ переименовываем):
+#   cmd/bot   → telegram-бот (legacy, дефолтный CMD)
+#   cmd/agent → AI-agent runtime (запускается через command override в k8s)
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sambacrm-business-tg ./cmd/bot
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sambacrm-business-agent ./cmd/agent
 
 # Финальный образ
 FROM alpine:latest
