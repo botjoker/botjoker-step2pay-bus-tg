@@ -89,7 +89,7 @@ var (
 	reCard  = regexp.MustCompile(`\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b`)
 	rePhone = regexp.MustCompile(`(\+7|8)[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2}`)
 	reSNILS = regexp.MustCompile(`\b\d{3}-\d{3}-\d{3} ?\d{2}\b`)
-	rePassp = regexp.MustCompile(`\b\d{4} ?\d{6}\b`)
+	rePassp = regexp.MustCompile(`\b\d{4} \d{6}\b`) // паспорт пишут с пробелом; без пробела 10 цифр → ИНН
 	reINN   = regexp.MustCompile(`\b(\d{12}|\d{10})\b`)
 )
 

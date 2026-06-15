@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -16,7 +17,7 @@ import (
 // HandleUpdate обрабатывает входящий Telegram-апдейт: резолвит диалог, запускает
 // агента и стримит ответ через редактирование одного сообщения.
 func (m *Manager) HandleUpdate(ctx context.Context, channelID uuid.UUID, update *tele.Update) error {
-	bot, ok := m.get(channelID)
+	ref, ok := m.get(channelID)
 	if !ok {
 		return nil // бот не запущен — игнорируем
 	}
@@ -34,10 +35,12 @@ func (m *Manager) HandleUpdate(ctx context.Context, channelID uuid.UUID, update 
 		return err
 	}
 
-	// Вложения (фото).
+	// Вложения (фото). В telebot.v3 нет FileURLByID — берём FilePath через
+	// FileByID и собираем публичный file-URL Telegram с токеном бота.
 	var attachments []llm.Attachment
 	if msg.Photo != nil {
-		if url, err := bot.FileURLByID(msg.Photo.FileID); err == nil {
+		if f, err := ref.bot.FileByID(msg.Photo.FileID); err == nil && f.FilePath != "" {
+			url := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", ref.token, f.FilePath)
 			attachments = append(attachments, llm.Attachment{Type: "image", URL: url, MIMEType: "image/jpeg"})
 		}
 	}
@@ -48,7 +51,7 @@ func (m *Manager) HandleUpdate(ctx context.Context, channelID uuid.UUID, update 
 		return err
 	}
 
-	m.streamToChat(bot, msg.Chat, stream)
+	m.streamToChat(ref.bot, msg.Chat, stream)
 	return nil
 }
 

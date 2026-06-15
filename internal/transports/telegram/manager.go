@@ -21,15 +21,21 @@ type Runner interface {
 	RunConversation(ctx context.Context, convID uuid.UUID, text string, attachments []llm.Attachment) (<-chan llm.StreamEvent, error)
 }
 
+// botRef — бот канала + его токен (токен нужен для сборки file-URL).
+type botRef struct {
+	bot   *tele.Bot
+	token string
+}
+
 // Manager держит по одному telebot.Bot на канал (для отправки сообщений).
 type Manager struct {
 	runner Runner
 	mu     sync.RWMutex
-	bots   map[uuid.UUID]*tele.Bot
+	bots   map[uuid.UUID]*botRef
 }
 
 func NewManager(runner Runner) *Manager {
-	return &Manager{runner: runner, bots: make(map[uuid.UUID]*tele.Bot)}
+	return &Manager{runner: runner, bots: make(map[uuid.UUID]*botRef)}
 }
 
 // Start регистрирует бота канала (token уже расшифрован).
@@ -45,7 +51,7 @@ func (m *Manager) Start(channelID uuid.UUID, token string) error {
 		return fmt.Errorf("telegram: new bot: %w", err)
 	}
 	m.mu.Lock()
-	m.bots[channelID] = bot
+	m.bots[channelID] = &botRef{bot: bot, token: token}
 	m.mu.Unlock()
 	return nil
 }
@@ -57,7 +63,7 @@ func (m *Manager) Stop(channelID uuid.UUID) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) get(channelID uuid.UUID) (*tele.Bot, bool) {
+func (m *Manager) get(channelID uuid.UUID) (*botRef, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	b, ok := m.bots[channelID]
@@ -73,7 +79,7 @@ func (m *Manager) Count() int {
 
 // SendToConversation реализует runtime.TransportSender (для live takeover).
 func (m *Manager) SendToConversation(_ context.Context, channelID uuid.UUID, externalUserID, text string) error {
-	bot, ok := m.get(channelID)
+	ref, ok := m.get(channelID)
 	if !ok {
 		return fmt.Errorf("telegram: channel %s not running", channelID)
 	}
@@ -81,7 +87,7 @@ func (m *Manager) SendToConversation(_ context.Context, channelID uuid.UUID, ext
 	if err != nil {
 		return fmt.Errorf("telegram: bad external user id %q", externalUserID)
 	}
-	_, err = bot.Send(&tele.Chat{ID: chatID}, text)
+	_, err = ref.bot.Send(&tele.Chat{ID: chatID}, text)
 	return err
 }
 
