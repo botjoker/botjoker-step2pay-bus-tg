@@ -5,9 +5,458 @@
 package storage
 
 import (
+	"net/netip"
+
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/pgvector/pgvector-go"
 )
+
+type Agent struct {
+	ID                       pgtype.UUID        `json:"id"`
+	ProfileID                pgtype.UUID        `json:"profile_id"`
+	Slug                     string             `json:"slug"`
+	Name                     string             `json:"name"`
+	Description              pgtype.Text        `json:"description"`
+	AvatarMediaID            pgtype.UUID        `json:"avatar_media_id"`
+	Persona                  string             `json:"persona"`
+	GreetingMessage          pgtype.Text        `json:"greeting_message"`
+	FallbackMessage          pgtype.Text        `json:"fallback_message"`
+	SafetyDisclaimer         pgtype.Text        `json:"safety_disclaimer"`
+	LlmProvider              string             `json:"llm_provider"`
+	LlmModel                 string             `json:"llm_model"`
+	LlmCredentialsID         pgtype.UUID        `json:"llm_credentials_id"`
+	LlmTemperature           pgtype.Numeric     `json:"llm_temperature"`
+	LlmMaxTokens             pgtype.Int4        `json:"llm_max_tokens"`
+	LlmMaxIterations         pgtype.Int4        `json:"llm_max_iterations"`
+	EmbeddingProvider        pgtype.Text        `json:"embedding_provider"`
+	EmbeddingModel           pgtype.Text        `json:"embedding_model"`
+	EmbeddingCredentialsID   pgtype.UUID        `json:"embedding_credentials_id"`
+	EmbeddingDim             pgtype.Int4        `json:"embedding_dim"`
+	RagEnabled               bool               `json:"rag_enabled"`
+	RagTopK                  pgtype.Int4        `json:"rag_top_k"`
+	RagMinScore              pgtype.Numeric     `json:"rag_min_score"`
+	DefaultLanguage          pgtype.Text        `json:"default_language"`
+	AutoDetectLanguage       pgtype.Bool        `json:"auto_detect_language"`
+	AllowedLanguages         []string           `json:"allowed_languages"`
+	VisionEnabled            pgtype.Bool        `json:"vision_enabled"`
+	VisionModel              pgtype.Text        `json:"vision_model"`
+	TakeoverEnabled          pgtype.Bool        `json:"takeover_enabled"`
+	TakeoverNotifyChannel    pgtype.Text        `json:"takeover_notify_channel"`
+	TakeoverNotifyTarget     pgtype.Text        `json:"takeover_notify_target"`
+	ProactiveEnabled         pgtype.Bool        `json:"proactive_enabled"`
+	ProactiveQuietHoursLocal *string            `json:"proactive_quiet_hours_local"`
+	BrandColor               pgtype.Text        `json:"brand_color"`
+	BrandLogoMediaID         pgtype.UUID        `json:"brand_logo_media_id"`
+	BrandPoweredByHidden     pgtype.Bool        `json:"brand_powered_by_hidden"`
+	PlanTier                 pgtype.Text        `json:"plan_tier"`
+	ShareFactsAcrossChannels pgtype.Bool        `json:"share_facts_across_channels"`
+	IsActive                 bool               `json:"is_active"`
+	IsDeleted                bool               `json:"is_deleted"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy                pgtype.UUID        `json:"created_by"`
+	UpdatedBy                pgtype.UUID        `json:"updated_by"`
+}
+
+type AgentBillingUsage struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ProfileID           pgtype.UUID        `json:"profile_id"`
+	PeriodStart         pgtype.Date        `json:"period_start"`
+	PeriodEnd           pgtype.Date        `json:"period_end"`
+	MessagesCount       int32              `json:"messages_count"`
+	TokensIn            int64              `json:"tokens_in"`
+	TokensOut           int64              `json:"tokens_out"`
+	CostUsdRaw          pgtype.Numeric     `json:"cost_usd_raw"`
+	CostRubBilled       pgtype.Numeric     `json:"cost_rub_billed"`
+	EmbeddingsGenerated int32              `json:"embeddings_generated"`
+	ProactiveSent       int32              `json:"proactive_sent"`
+	StorageMb           pgtype.Numeric     `json:"storage_mb"`
+	SoftCapHit          pgtype.Bool        `json:"soft_cap_hit"`
+	HardCapHit          pgtype.Bool        `json:"hard_cap_hit"`
+	SoftCapNotifiedAt   pgtype.Timestamptz `json:"soft_cap_notified_at"`
+	HardCapNotifiedAt   pgtype.Timestamptz `json:"hard_cap_notified_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentChannel struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ProfileID           pgtype.UUID        `json:"profile_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	ChannelType         string             `json:"channel_type"`
+	Name                pgtype.Text        `json:"name"`
+	TgBotToken          pgtype.Text        `json:"tg_bot_token"`
+	TgBotUsername       pgtype.Text        `json:"tg_bot_username"`
+	VkGroupID           pgtype.Int8        `json:"vk_group_id"`
+	VkAccessToken       pgtype.Text        `json:"vk_access_token"`
+	VkSecretKey         pgtype.Text        `json:"vk_secret_key"`
+	MaxBotToken         pgtype.Text        `json:"max_bot_token"`
+	AvitoUserID         pgtype.Int8        `json:"avito_user_id"`
+	AvitoClientID       pgtype.Text        `json:"avito_client_id"`
+	AvitoClientSecret   pgtype.Text        `json:"avito_client_secret"`
+	AvitoAccessToken    pgtype.Text        `json:"avito_access_token"`
+	AvitoTokenExpiresAt pgtype.Timestamptz `json:"avito_token_expires_at"`
+	WebSlug             pgtype.Text        `json:"web_slug"`
+	WebIsPublic         pgtype.Bool        `json:"web_is_public"`
+	WebRateLimitPerMin  pgtype.Int4        `json:"web_rate_limit_per_min"`
+	WebAllowedDomains   []string           `json:"web_allowed_domains"`
+	WebCustomDomain     pgtype.Text        `json:"web_custom_domain"`
+	IsActive            bool               `json:"is_active"`
+	IsDeleted           bool               `json:"is_deleted"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentConsent struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ProfileID           pgtype.UUID        `json:"profile_id"`
+	ConversationID      pgtype.UUID        `json:"conversation_id"`
+	TemplateID          pgtype.UUID        `json:"template_id"`
+	ConsentType         string             `json:"consent_type"`
+	ConsentVersion      string             `json:"consent_version"`
+	ConsentTextSnapshot string             `json:"consent_text_snapshot"`
+	Granted             bool               `json:"granted"`
+	GrantedAt           pgtype.Timestamptz `json:"granted_at"`
+	RevokedAt           pgtype.Timestamptz `json:"revoked_at"`
+	IpAddress           *netip.Addr        `json:"ip_address"`
+	UserAgent           pgtype.Text        `json:"user_agent"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentConsentTemplate struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	ConsentType string             `json:"consent_type"`
+	Version     string             `json:"version"`
+	Title       string             `json:"title"`
+	BodyMd      string             `json:"body_md"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentConversation struct {
+	ID               pgtype.UUID        `json:"id"`
+	ProfileID        pgtype.UUID        `json:"profile_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	ChannelID        pgtype.UUID        `json:"channel_id"`
+	ExternalUserID   string             `json:"external_user_id"`
+	ExternalChatID   pgtype.Text        `json:"external_chat_id"`
+	CustomerID       pgtype.UUID        `json:"customer_id"`
+	Title            pgtype.Text        `json:"title"`
+	Summary          pgtype.Text        `json:"summary"`
+	Context          []byte             `json:"context"`
+	IsEscalated      pgtype.Bool        `json:"is_escalated"`
+	EscalatedAt      pgtype.Timestamptz `json:"escalated_at"`
+	EscalationReason pgtype.Text        `json:"escalation_reason"`
+	IsActive         bool               `json:"is_active"`
+	LastMessageAt    pgtype.Timestamptz `json:"last_message_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentConversationFact struct {
+	ID              pgtype.UUID        `json:"id"`
+	ProfileID       pgtype.UUID        `json:"profile_id"`
+	ConversationID  pgtype.UUID        `json:"conversation_id"`
+	IntakeFieldID   pgtype.UUID        `json:"intake_field_id"`
+	FieldKey        string             `json:"field_key"`
+	FieldValue      []byte             `json:"field_value"`
+	Confidence      pgtype.Numeric     `json:"confidence"`
+	SourceMessageID pgtype.UUID        `json:"source_message_id"`
+	SourceExcerpt   pgtype.Text        `json:"source_excerpt"`
+	IsVerified      pgtype.Bool        `json:"is_verified"`
+	SupersededBy    pgtype.UUID        `json:"superseded_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentConversationInsight struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ProfileID           pgtype.UUID        `json:"profile_id"`
+	ConversationID      pgtype.UUID        `json:"conversation_id"`
+	Tags                []string           `json:"tags"`
+	Sentiment           pgtype.Text        `json:"sentiment"`
+	SentimentConfidence pgtype.Numeric     `json:"sentiment_confidence"`
+	PrimaryIntent       pgtype.Text        `json:"primary_intent"`
+	SecondaryIntents    []string           `json:"secondary_intents"`
+	Topics              []string           `json:"topics"`
+	ShortSummary        pgtype.Text        `json:"short_summary"`
+	LongSummary         pgtype.Text        `json:"long_summary"`
+	ContactExtracted    []byte             `json:"contact_extracted"`
+	NextStepSuggestion  pgtype.Text        `json:"next_step_suggestion"`
+	Converted           pgtype.Bool        `json:"converted"`
+	ConversionTool      pgtype.Text        `json:"conversion_tool"`
+	GeneratedAt         pgtype.Timestamptz `json:"generated_at"`
+	LlmModel            pgtype.Text        `json:"llm_model"`
+}
+
+type AgentEvalCase struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ProfileID           pgtype.UUID        `json:"profile_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	CaseName            string             `json:"case_name"`
+	UserInput           string             `json:"user_input"`
+	ExpectedKeywords    []string           `json:"expected_keywords"`
+	MustNotSay          []string           `json:"must_not_say"`
+	ExpectedToolCalls   []string           `json:"expected_tool_calls"`
+	ExpectedIntakeFacts []string           `json:"expected_intake_facts"`
+	ExpectedLanguage    pgtype.Text        `json:"expected_language"`
+	Notes               pgtype.Text        `json:"notes"`
+	IsActive            bool               `json:"is_active"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	CreatedBy           pgtype.UUID        `json:"created_by"`
+}
+
+type AgentEvalCaseResult struct {
+	ID                pgtype.UUID        `json:"id"`
+	ProfileID         pgtype.UUID        `json:"profile_id"`
+	RunID             pgtype.UUID        `json:"run_id"`
+	CaseID            pgtype.UUID        `json:"case_id"`
+	Verdict           string             `json:"verdict"`
+	ActualResponse    pgtype.Text        `json:"actual_response"`
+	ActualToolCalls   []string           `json:"actual_tool_calls"`
+	ActualIntakeFacts []string           `json:"actual_intake_facts"`
+	FailureReasons    []string           `json:"failure_reasons"`
+	LlmJudgeScore     pgtype.Numeric     `json:"llm_judge_score"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentEvalRun struct {
+	ID            pgtype.UUID        `json:"id"`
+	ProfileID     pgtype.UUID        `json:"profile_id"`
+	AgentID       pgtype.UUID        `json:"agent_id"`
+	TriggeredBy   pgtype.Text        `json:"triggered_by"`
+	AgentSnapshot []byte             `json:"agent_snapshot"`
+	Status        string             `json:"status"`
+	CasesTotal    pgtype.Int4        `json:"cases_total"`
+	CasesPassed   pgtype.Int4        `json:"cases_passed"`
+	CasesFailed   pgtype.Int4        `json:"cases_failed"`
+	CasesPartial  pgtype.Int4        `json:"cases_partial"`
+	CostUsd       pgtype.Numeric     `json:"cost_usd"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+}
+
+type AgentFeedback struct {
+	ID                pgtype.UUID        `json:"id"`
+	ProfileID         pgtype.UUID        `json:"profile_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	MessageID         pgtype.UUID        `json:"message_id"`
+	Rating            pgtype.Text        `json:"rating"`
+	Correction        pgtype.Text        `json:"correction"`
+	Note              pgtype.Text        `json:"note"`
+	PromotedToFewShot pgtype.Bool        `json:"promoted_to_few_shot"`
+	PromotedAt        pgtype.Timestamptz `json:"promoted_at"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentFormResponse struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	MessageID      pgtype.UUID        `json:"message_id"`
+	FormSchema     []byte             `json:"form_schema"`
+	FormValues     []byte             `json:"form_values"`
+	SubmittedAt    pgtype.Timestamptz `json:"submitted_at"`
+	ExpiredAt      pgtype.Timestamptz `json:"expired_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentInsightDigest struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	PeriodStart pgtype.Date        `json:"period_start"`
+	PeriodEnd   pgtype.Date        `json:"period_end"`
+	Metrics     []byte             `json:"metrics"`
+	Insights    []byte             `json:"insights"`
+	SentAt      pgtype.Timestamptz `json:"sent_at"`
+	SentTo      pgtype.Text        `json:"sent_to"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentIntakeField struct {
+	ID               pgtype.UUID        `json:"id"`
+	ProfileID        pgtype.UUID        `json:"profile_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	FieldKey         string             `json:"field_key"`
+	FieldLabel       string             `json:"field_label"`
+	FieldType        string             `json:"field_type"`
+	FieldOptions     []byte             `json:"field_options"`
+	FieldValidation  []byte             `json:"field_validation"`
+	ElicitationHint  pgtype.Text        `json:"elicitation_hint"`
+	RephraseExamples []byte             `json:"rephrase_examples"`
+	WhyWeAsk         pgtype.Text        `json:"why_we_ask"`
+	IsRequired       bool               `json:"is_required"`
+	AskPriority      int32              `json:"ask_priority"`
+	DependsOn        []byte             `json:"depends_on"`
+	IsActive         bool               `json:"is_active"`
+	IsDeleted        bool               `json:"is_deleted"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentKnowledgeChunk struct {
+	ID         pgtype.UUID        `json:"id"`
+	ProfileID  pgtype.UUID        `json:"profile_id"`
+	SourceID   pgtype.UUID        `json:"source_id"`
+	Content    string             `json:"content"`
+	Position   int32              `json:"position"`
+	TokenCount pgtype.Int4        `json:"token_count"`
+	Embedding  pgvector.Vector    `json:"embedding"`
+	Metadata   []byte             `json:"metadata"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentKnowledgeSource struct {
+	ID           pgtype.UUID        `json:"id"`
+	ProfileID    pgtype.UUID        `json:"profile_id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	SourceType   string             `json:"source_type"`
+	Title        string             `json:"title"`
+	FileMediaID  pgtype.UUID        `json:"file_media_id"`
+	FileFormat   pgtype.Text        `json:"file_format"`
+	SourceUrl    pgtype.Text        `json:"source_url"`
+	RawContent   pgtype.Text        `json:"raw_content"`
+	Status       string             `json:"status"`
+	ErrorMessage pgtype.Text        `json:"error_message"`
+	ChunksCount  pgtype.Int4        `json:"chunks_count"`
+	Metadata     []byte             `json:"metadata"`
+	IsActive     bool               `json:"is_active"`
+	IsDeleted    bool               `json:"is_deleted"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	IndexedAt    pgtype.Timestamptz `json:"indexed_at"`
+}
+
+type AgentMessage struct {
+	ID                pgtype.UUID        `json:"id"`
+	ProfileID         pgtype.UUID        `json:"profile_id"`
+	ConversationID    pgtype.UUID        `json:"conversation_id"`
+	Role              string             `json:"role"`
+	Content           pgtype.Text        `json:"content"`
+	ContentOriginal   pgtype.Text        `json:"content_original"`
+	ToolCalls         []byte             `json:"tool_calls"`
+	ToolCallID        pgtype.Text        `json:"tool_call_id"`
+	ToolResult        []byte             `json:"tool_result"`
+	RetrievedChunks   []byte             `json:"retrieved_chunks"`
+	Citations         []byte             `json:"citations"`
+	Attachments       []byte             `json:"attachments"`
+	HasImage          pgtype.Bool        `json:"has_image"`
+	DetectedLanguage  pgtype.Text        `json:"detected_language"`
+	ResponseLanguage  pgtype.Text        `json:"response_language"`
+	OperatorAccountID pgtype.UUID        `json:"operator_account_id"`
+	RedactionApplied  pgtype.Bool        `json:"redaction_applied"`
+	RedactionLog      []byte             `json:"redaction_log"`
+	TokensIn          pgtype.Int4        `json:"tokens_in"`
+	TokensOut         pgtype.Int4        `json:"tokens_out"`
+	CostUsd           pgtype.Numeric     `json:"cost_usd"`
+	LatencyMs         pgtype.Int4        `json:"latency_ms"`
+	LlmModel          pgtype.Text        `json:"llm_model"`
+	LlmProvider       pgtype.Text        `json:"llm_provider"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentOutreachRule struct {
+	ID              pgtype.UUID        `json:"id"`
+	ProfileID       pgtype.UUID        `json:"profile_id"`
+	AgentID         pgtype.UUID        `json:"agent_id"`
+	RuleName        string             `json:"rule_name"`
+	TriggerEvent    string             `json:"trigger_event"`
+	TriggerConfig   []byte             `json:"trigger_config"`
+	MessageTemplate string             `json:"message_template"`
+	IsActive        bool               `json:"is_active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentPlanLimit struct {
+	PlanTier                     string             `json:"plan_tier"`
+	DisplayName                  string             `json:"display_name"`
+	PriceRubMonthly              pgtype.Numeric     `json:"price_rub_monthly"`
+	MaxAgents                    pgtype.Int4        `json:"max_agents"`
+	MaxChannelsPerAgent          pgtype.Int4        `json:"max_channels_per_agent"`
+	MaxMessagesPerMonth          pgtype.Int4        `json:"max_messages_per_month"`
+	MaxTokensPerMonth            pgtype.Int8        `json:"max_tokens_per_month"`
+	MaxKnowledgeMb               pgtype.Int4        `json:"max_knowledge_mb"`
+	MaxProactiveMessagesPerMonth pgtype.Int4        `json:"max_proactive_messages_per_month"`
+	AllowedFeatures              []string           `json:"allowed_features"`
+	CostMarkupMultiplier         pgtype.Numeric     `json:"cost_markup_multiplier"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentPreset struct {
+	Slug                string             `json:"slug"`
+	Name                string             `json:"name"`
+	Emoji               pgtype.Text        `json:"emoji"`
+	Description         pgtype.Text        `json:"description"`
+	Category            string             `json:"category"`
+	Persona             string             `json:"persona"`
+	GreetingMessage     pgtype.Text        `json:"greeting_message"`
+	SafetyDisclaimer    pgtype.Text        `json:"safety_disclaimer"`
+	RecommendedProvider pgtype.Text        `json:"recommended_provider"`
+	RecommendedModel    pgtype.Text        `json:"recommended_model"`
+	IntakeFields        []byte             `json:"intake_fields"`
+	RecommendedTools    []string           `json:"recommended_tools"`
+	KnowledgeSeedUrls   []string           `json:"knowledge_seed_urls"`
+	IsActive            bool               `json:"is_active"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentScheduledOutreach struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	AgentID        pgtype.UUID        `json:"agent_id"`
+	TriggerType    string             `json:"trigger_type"`
+	RuleID         pgtype.UUID        `json:"rule_id"`
+	ScheduledFor   pgtype.Timestamptz `json:"scheduled_for"`
+	MessageHint    pgtype.Text        `json:"message_hint"`
+	TemplateKey    pgtype.Text        `json:"template_key"`
+	Status         string             `json:"status"`
+	SentMessageID  pgtype.UUID        `json:"sent_message_id"`
+	SkipReason     pgtype.Text        `json:"skip_reason"`
+	ErrorMessage   pgtype.Text        `json:"error_message"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+}
+
+type AgentTakeover struct {
+	ID                pgtype.UUID        `json:"id"`
+	ProfileID         pgtype.UUID        `json:"profile_id"`
+	ConversationID    pgtype.UUID        `json:"conversation_id"`
+	OperatorAccountID pgtype.UUID        `json:"operator_account_id"`
+	Mode              string             `json:"mode"`
+	Reason            pgtype.Text        `json:"reason"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	EndedAt           pgtype.Timestamptz `json:"ended_at"`
+	ReturnToAi        pgtype.Bool        `json:"return_to_ai"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentTool struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProfileID pgtype.UUID        `json:"profile_id"`
+	AgentID   pgtype.UUID        `json:"agent_id"`
+	ToolName  string             `json:"tool_name"`
+	Config    []byte             `json:"config"`
+	IsEnabled bool               `json:"is_enabled"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentToolExecution struct {
+	ID           pgtype.UUID        `json:"id"`
+	ProfileID    pgtype.UUID        `json:"profile_id"`
+	MessageID    pgtype.UUID        `json:"message_id"`
+	ToolName     string             `json:"tool_name"`
+	Arguments    []byte             `json:"arguments"`
+	Result       []byte             `json:"result"`
+	Status       string             `json:"status"`
+	ErrorMessage pgtype.Text        `json:"error_message"`
+	LatencyMs    pgtype.Int4        `json:"latency_ms"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
 
 type Appointment struct {
 	ID                    pgtype.UUID        `json:"id"`
@@ -49,6 +498,41 @@ type Certificate struct {
 	IssuedAt          pgtype.Timestamptz `json:"issued_at"`
 	CustomFields      []byte             `json:"custom_fields"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type CmsBlock struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	BlockType   string             `json:"block_type"`
+	Content     []byte             `json:"content"`
+	IsReusable  pgtype.Bool        `json:"is_reusable"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+}
+
+type CmsPage struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	Title       string             `json:"title"`
+	Slug        string             `json:"slug"`
+	Settings    []byte             `json:"settings"`
+	IsPublished pgtype.Bool        `json:"is_published"`
+	PublishedAt pgtype.Timestamptz `json:"published_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+}
+
+type CmsPageBlock struct {
+	ID              pgtype.UUID        `json:"id"`
+	PageID          pgtype.UUID        `json:"page_id"`
+	BlockID         pgtype.UUID        `json:"block_id"`
+	OrderIndex      int32              `json:"order_index"`
+	ContentOverride []byte             `json:"content_override"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type CoreAccount struct {
@@ -98,38 +582,46 @@ type CorePermission struct {
 }
 
 type CoreProfile struct {
-	ID                       pgtype.UUID        `json:"id"`
-	Active                   pgtype.Bool        `json:"active"`
-	Domain                   pgtype.Text        `json:"domain"`
-	Email                    pgtype.Text        `json:"email"`
-	Firstname                pgtype.Text        `json:"firstname"`
-	Lastname                 pgtype.Text        `json:"lastname"`
-	Patronymic               pgtype.Text        `json:"patronymic"`
-	IsBusinessOwner          pgtype.Bool        `json:"is_business_owner"`
-	IsBusinessAdmin          pgtype.Bool        `json:"is_business_admin"`
-	Extra                    pgtype.Text        `json:"extra"`
-	Archived                 pgtype.Bool        `json:"archived"`
-	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
-	CompanyName              pgtype.Text        `json:"company_name"`
-	BusinessType             pgtype.Text        `json:"business_type"`
-	Inn                      pgtype.Text        `json:"inn"`
-	Ogrn                     pgtype.Text        `json:"ogrn"`
-	Kpp                      pgtype.Text        `json:"kpp"`
-	Okpo                     pgtype.Text        `json:"okpo"`
-	AccountNumber            pgtype.Text        `json:"account_number"`
-	BankBic                  pgtype.Text        `json:"bank_bic"`
-	BankCorrespondentAccount pgtype.Text        `json:"bank_correspondent_account"`
-	BankInn                  pgtype.Text        `json:"bank_inn"`
-	BankName                 pgtype.Text        `json:"bank_name"`
-	BankAddress              pgtype.Text        `json:"bank_address"`
-	ContactPerson            pgtype.Text        `json:"contact_person"`
-	ContactPhone             pgtype.Text        `json:"contact_phone"`
-	ContactTelegram          pgtype.Text        `json:"contact_telegram"`
-	LegalAddress             pgtype.Text        `json:"legal_address"`
-	ActualAddress            pgtype.Text        `json:"actual_address"`
-	Tariff                   pgtype.Text        `json:"tariff"`
-	WorkStartDate            pgtype.Date        `json:"work_start_date"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	ID                        pgtype.UUID        `json:"id"`
+	Active                    pgtype.Bool        `json:"active"`
+	Domain                    pgtype.Text        `json:"domain"`
+	Email                     pgtype.Text        `json:"email"`
+	Firstname                 pgtype.Text        `json:"firstname"`
+	Lastname                  pgtype.Text        `json:"lastname"`
+	Patronymic                pgtype.Text        `json:"patronymic"`
+	IsBusinessOwner           pgtype.Bool        `json:"is_business_owner"`
+	IsBusinessAdmin           pgtype.Bool        `json:"is_business_admin"`
+	Extra                     pgtype.Text        `json:"extra"`
+	Archived                  pgtype.Bool        `json:"archived"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	CompanyName               pgtype.Text        `json:"company_name"`
+	BusinessType              pgtype.Text        `json:"business_type"`
+	Inn                       pgtype.Text        `json:"inn"`
+	Ogrn                      pgtype.Text        `json:"ogrn"`
+	Kpp                       pgtype.Text        `json:"kpp"`
+	Okpo                      pgtype.Text        `json:"okpo"`
+	AccountNumber             pgtype.Text        `json:"account_number"`
+	BankBic                   pgtype.Text        `json:"bank_bic"`
+	BankCorrespondentAccount  pgtype.Text        `json:"bank_correspondent_account"`
+	BankInn                   pgtype.Text        `json:"bank_inn"`
+	BankName                  pgtype.Text        `json:"bank_name"`
+	BankAddress               pgtype.Text        `json:"bank_address"`
+	ContactPerson             pgtype.Text        `json:"contact_person"`
+	ContactPhone              pgtype.Text        `json:"contact_phone"`
+	ContactTelegram           pgtype.Text        `json:"contact_telegram"`
+	LegalAddress              pgtype.Text        `json:"legal_address"`
+	ActualAddress             pgtype.Text        `json:"actual_address"`
+	Tariff                    pgtype.Text        `json:"tariff"`
+	WorkStartDate             pgtype.Date        `json:"work_start_date"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	AgentBillingMode          string             `json:"agent_billing_mode"`
+	DataResidency             string             `json:"data_residency"`
+	AllowedLlmProviders       []string           `json:"allowed_llm_providers"`
+	AllowedEmbeddingProviders []string           `json:"allowed_embedding_providers"`
+	// true → runtime разрешает только РФ/local провайдеров, даже если в allowed_llm_providers есть зарубежные
+	SovereignMode             bool   `json:"sovereign_mode"`
+	AgentObservabilityEnabled bool   `json:"agent_observability_enabled"`
+	AgentPlanTier             string `json:"agent_plan_tier"`
 }
 
 type CoreProfileModule struct {
@@ -224,6 +716,8 @@ type Customer struct {
 	UpdatedBy         pgtype.UUID        `json:"updated_by"`
 	IsDeleted         pgtype.Bool        `json:"is_deleted"`
 	AccountID         pgtype.UUID        `json:"account_id"`
+	Birthdate         pgtype.Date        `json:"birthdate"`
+	DocumentMediaID   pgtype.UUID        `json:"document_media_id"`
 }
 
 type CustomerVkLink struct {
@@ -256,6 +750,54 @@ type CustomersContact struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 	IsDeleted  pgtype.Bool        `json:"is_deleted"`
+}
+
+type DiplomaTemplate struct {
+	ID              pgtype.UUID        `json:"id"`
+	ProfileID       pgtype.UUID        `json:"profile_id"`
+	Name            string             `json:"name"`
+	TemplateMediaID pgtype.UUID        `json:"template_media_id"`
+	Placeholders    []byte             `json:"placeholders"`
+	TemplateType    string             `json:"template_type"`
+	IsActive        bool               `json:"is_active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DivisionAgeGroup struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProfileID pgtype.UUID        `json:"profile_id"`
+	Name      string             `json:"name"`
+	MinAge    int32              `json:"min_age"`
+	MaxAge    int32              `json:"max_age"`
+	SortOrder int32              `json:"sort_order"`
+	IsActive  bool               `json:"is_active"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DivisionLevel struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProfileID pgtype.UUID        `json:"profile_id"`
+	Code      string             `json:"code"`
+	Name      string             `json:"name"`
+	SortOrder int32              `json:"sort_order"`
+	IsActive  bool               `json:"is_active"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DivisionSize struct {
+	ID              pgtype.UUID        `json:"id"`
+	ProfileID       pgtype.UUID        `json:"profile_id"`
+	Code            string             `json:"code"`
+	Name            string             `json:"name"`
+	MinParticipants int32              `json:"min_participants"`
+	MaxParticipants pgtype.Int4        `json:"max_participants"`
+	SortOrder       int32              `json:"sort_order"`
+	IsActive        bool               `json:"is_active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type EducationBalanceAccount struct {
@@ -425,73 +967,338 @@ type EducationSubject struct {
 	IsDeleted   pgtype.Bool        `json:"is_deleted"`
 }
 
-type Event struct {
-	ID                   pgtype.UUID        `json:"id"`
-	ProfileID            pgtype.UUID        `json:"profile_id"`
-	VenueID              pgtype.UUID        `json:"venue_id"`
-	Title                string             `json:"title"`
-	Slug                 pgtype.Text        `json:"slug"`
-	Description          pgtype.Text        `json:"description"`
-	ShortDescription     pgtype.Text        `json:"short_description"`
-	EventType            string             `json:"event_type"`
-	Category             pgtype.Text        `json:"category"`
-	Tags                 []string           `json:"tags"`
-	StartDate            pgtype.Timestamptz `json:"start_date"`
-	EndDate              pgtype.Timestamptz `json:"end_date"`
-	Timezone             pgtype.Text        `json:"timezone"`
-	IsOnline             pgtype.Bool        `json:"is_online"`
-	OnlineUrl            pgtype.Text        `json:"online_url"`
-	Address              pgtype.Text        `json:"address"`
-	City                 pgtype.Text        `json:"city"`
-	Coordinates          pgtype.Text        `json:"coordinates"`
-	RegistrationRequired pgtype.Bool        `json:"registration_required"`
-	RegistrationStart    pgtype.Timestamptz `json:"registration_start"`
-	RegistrationEnd      pgtype.Timestamptz `json:"registration_end"`
-	MaxParticipants      pgtype.Int4        `json:"max_participants"`
-	AgeRestriction       pgtype.Text        `json:"age_restriction"`
-	CoverImage           pgtype.Text        `json:"cover_image"`
-	Gallery              []byte             `json:"gallery"`
-	OrganizerName        pgtype.Text        `json:"organizer_name"`
-	ContactEmail         pgtype.Text        `json:"contact_email"`
-	ContactPhone         pgtype.Text        `json:"contact_phone"`
-	Website              pgtype.Text        `json:"website"`
-	SocialLinks          []byte             `json:"social_links"`
-	Status               string             `json:"status"`
-	Visibility           string             `json:"visibility"`
-	CustomFields         []byte             `json:"custom_fields"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	PublishedAt          pgtype.Timestamptz `json:"published_at"`
-	CreatedBy            pgtype.UUID        `json:"created_by"`
-	Stage                pgtype.Text        `json:"stage"`
-	PaymentFormID        pgtype.UUID        `json:"payment_form_id"`
+type EmailTemplate struct {
+	ID         pgtype.UUID        `json:"id"`
+	ProfileID  pgtype.UUID        `json:"profile_id"`
+	Name       string             `json:"name"`
+	TriggerKey string             `json:"trigger_key"`
+	Subject    string             `json:"subject"`
+	HtmlBody   string             `json:"html_body"`
+	IsActive   bool               `json:"is_active"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	EventID    pgtype.UUID        `json:"event_id"`
 }
 
-type EventRegistration struct {
+type Event struct {
+	ID                             pgtype.UUID        `json:"id"`
+	ProfileID                      pgtype.UUID        `json:"profile_id"`
+	VenueID                        pgtype.UUID        `json:"venue_id"`
+	Title                          string             `json:"title"`
+	Slug                           pgtype.Text        `json:"slug"`
+	Description                    pgtype.Text        `json:"description"`
+	ShortDescription               pgtype.Text        `json:"short_description"`
+	EventType                      string             `json:"event_type"`
+	Category                       pgtype.Text        `json:"category"`
+	Tags                           []string           `json:"tags"`
+	StartDate                      pgtype.Timestamptz `json:"start_date"`
+	EndDate                        pgtype.Timestamptz `json:"end_date"`
+	Timezone                       pgtype.Text        `json:"timezone"`
+	Address                        pgtype.Text        `json:"address"`
+	City                           pgtype.Text        `json:"city"`
+	RegistrationRequired           pgtype.Bool        `json:"registration_required"`
+	RegistrationStart              pgtype.Timestamptz `json:"registration_start"`
+	RegistrationEnd                pgtype.Timestamptz `json:"registration_end"`
+	MaxParticipants                pgtype.Int4        `json:"max_participants"`
+	AgeRestriction                 pgtype.Text        `json:"age_restriction"`
+	CoverImage                     pgtype.Text        `json:"cover_image"`
+	Gallery                        []byte             `json:"gallery"`
+	OrganizerName                  pgtype.Text        `json:"organizer_name"`
+	ContactEmail                   pgtype.Text        `json:"contact_email"`
+	ContactPhone                   pgtype.Text        `json:"contact_phone"`
+	Website                        pgtype.Text        `json:"website"`
+	SocialLinks                    []byte             `json:"social_links"`
+	Status                         string             `json:"status"`
+	Visibility                     string             `json:"visibility"`
+	CustomFields                   []byte             `json:"custom_fields"`
+	CreatedAt                      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                      pgtype.Timestamptz `json:"updated_at"`
+	PublishedAt                    pgtype.Timestamptz `json:"published_at"`
+	CreatedBy                      pgtype.UUID        `json:"created_by"`
+	PaymentFormID                  pgtype.UUID        `json:"payment_form_id"`
+	RegistrationFields             []byte             `json:"registration_fields"`
+	ScoringSystem                  pgtype.Text        `json:"scoring_system"`
+	CmsPageID                      pgtype.UUID        `json:"cms_page_id"`
+	TicketsConfigID                pgtype.UUID        `json:"tickets_config_id"`
+	ShowTeamSize                   bool               `json:"show_team_size"`
+	ShowRegCity                    bool               `json:"show_reg_city"`
+	ShowVkContact                  bool               `json:"show_vk_contact"`
+	ShowContact2                   bool               `json:"show_contact2"`
+	LogoUrl                        pgtype.Text        `json:"logo_url"`
+	ScoringStrategy                string             `json:"scoring_strategy"`
+	RecallThreshold                pgtype.Int4        `json:"recall_threshold"`
+	LotteryStatus                  string             `json:"lottery_status"`
+	LotteryFrozenAt                pgtype.Timestamptz `json:"lottery_frozen_at"`
+	EventClass                     pgtype.Text        `json:"event_class"`
+	LivestreamUrl                  pgtype.Text        `json:"livestream_url"`
+	LivestreamProvider             pgtype.Text        `json:"livestream_provider"`
+	ResultsPublishedAt             pgtype.Timestamptz `json:"results_published_at"`
+	FederationID                   pgtype.UUID        `json:"federation_id"`
+	InsuranceRequired              pgtype.Bool        `json:"insurance_required"`
+	PeoplesChoiceEnabled           pgtype.Bool        `json:"peoples_choice_enabled"`
+	PeoplesChoiceMaxVotesPerDevice pgtype.Int4        `json:"peoples_choice_max_votes_per_device"`
+	CeremonyNominationID           pgtype.UUID        `json:"ceremony_nomination_id"`
+}
+
+type EventAppellation struct {
 	ID              pgtype.UUID        `json:"id"`
 	ProfileID       pgtype.UUID        `json:"profile_id"`
 	EventID         pgtype.UUID        `json:"event_id"`
-	CustomerID      pgtype.UUID        `json:"customer_id"`
-	Name            string             `json:"name"`
-	Email           pgtype.Text        `json:"email"`
-	Phone           pgtype.Text        `json:"phone"`
-	Company         pgtype.Text        `json:"company"`
-	Position        pgtype.Text        `json:"position"`
+	RegistrationID  pgtype.UUID        `json:"registration_id"`
+	SubmittedBy     pgtype.UUID        `json:"submitted_by"`
+	SubmittedAt     pgtype.Timestamptz `json:"submitted_at"`
+	Reason          string             `json:"reason"`
+	EvidenceMediaID pgtype.UUID        `json:"evidence_media_id"`
 	Status          string             `json:"status"`
-	CheckedInAt     pgtype.Timestamptz `json:"checked_in_at"`
-	QrCode          pgtype.Text        `json:"qr_code"`
-	Notes           pgtype.Text        `json:"notes"`
-	Answers         []byte             `json:"answers"`
-	CustomFields    []byte             `json:"custom_fields"`
-	RegisteredAt    pgtype.Timestamptz `json:"registered_at"`
+	DecisionText    pgtype.Text        `json:"decision_text"`
+	DecidedBy       pgtype.UUID        `json:"decided_by"`
+	DecidedAt       pgtype.Timestamptz `json:"decided_at"`
+}
+
+type EventAwardItem struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	EventID        pgtype.UUID        `json:"event_id"`
+	RegistrationID pgtype.UUID        `json:"registration_id"`
+	ItemType       string             `json:"item_type"`
+	ItemLabel      pgtype.Text        `json:"item_label"`
+	Place          pgtype.Int4        `json:"place"`
+	IsIssued       bool               `json:"is_issued"`
+	IssuedAt       pgtype.Timestamptz `json:"issued_at"`
+	IssuedBy       pgtype.UUID        `json:"issued_by"`
+	Notes          pgtype.Text        `json:"notes"`
+	IsAuto         bool               `json:"is_auto"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventExpense struct {
+	ID         pgtype.UUID        `json:"id"`
+	ProfileID  pgtype.UUID        `json:"profile_id"`
+	EventID    pgtype.UUID        `json:"event_id"`
+	CategoryID pgtype.UUID        `json:"category_id"`
+	Name       string             `json:"name"`
+	Price      pgtype.Numeric     `json:"price"`
+	Quantity   pgtype.Numeric     `json:"quantity"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventExpenseCategory struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProfileID pgtype.UUID        `json:"profile_id"`
+	EventID   pgtype.UUID        `json:"event_id"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventGrandPrix struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	EventID        pgtype.UUID        `json:"event_id"`
+	RegistrationID pgtype.UUID        `json:"registration_id"`
+	AwardLabel     string             `json:"award_label"`
+	DecidedMethod  pgtype.Text        `json:"decided_method"`
+	DecidedBy      pgtype.UUID        `json:"decided_by"`
+	DecidedAt      pgtype.Timestamptz `json:"decided_at"`
+	Notes          pgtype.Text        `json:"notes"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventJudge struct {
+	ID           pgtype.UUID        `json:"id"`
+	ProfileID    pgtype.UUID        `json:"profile_id"`
+	EventID      pgtype.UUID        `json:"event_id"`
+	FirstName    string             `json:"first_name"`
+	MiddleName   pgtype.Text        `json:"middle_name"`
+	LastName     string             `json:"last_name"`
+	Position     pgtype.Text        `json:"position"`
+	OrderIndex   pgtype.Int4        `json:"order_index"`
+	IsActive     pgtype.Bool        `json:"is_active"`
+	CustomFields []byte             `json:"custom_fields"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy    pgtype.UUID        `json:"created_by"`
+	SpecialistID pgtype.UUID        `json:"specialist_id"`
+	IsDeleted    bool               `json:"is_deleted"`
+	PanelRole    string             `json:"panel_role"`
+}
+
+type EventJudgeScore struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	EventID        pgtype.UUID        `json:"event_id"`
+	JudgeID        pgtype.UUID        `json:"judge_id"`
+	RegistrationID pgtype.UUID        `json:"registration_id"`
+	NominationID   pgtype.UUID        `json:"nomination_id"`
+	Score          pgtype.Numeric     `json:"score"`
+	Notes          pgtype.Text        `json:"notes"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	CriteriaID     pgtype.UUID        `json:"criteria_id"`
+	IsVoided       bool               `json:"is_voided"`
+	VoidedBy       pgtype.UUID        `json:"voided_by"`
+	VoidedAt       pgtype.Timestamptz `json:"voided_at"`
+	VoidedReason   pgtype.Text        `json:"voided_reason"`
+}
+
+type EventJudgeScoresAudit struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	ScoreID        pgtype.UUID        `json:"score_id"`
+	EventID        pgtype.UUID        `json:"event_id"`
+	JudgeID        pgtype.UUID        `json:"judge_id"`
+	RegistrationID pgtype.UUID        `json:"registration_id"`
+	Action         string             `json:"action"`
+	ScoreBefore    pgtype.Numeric     `json:"score_before"`
+	ScoreAfter     pgtype.Numeric     `json:"score_after"`
+	NotesBefore    pgtype.Text        `json:"notes_before"`
+	NotesAfter     pgtype.Text        `json:"notes_after"`
+	ChangedBy      pgtype.UUID        `json:"changed_by"`
+	ChangedAt      pgtype.Timestamptz `json:"changed_at"`
+	Reason         pgtype.Text        `json:"reason"`
+}
+
+type EventNomination struct {
+	ID              pgtype.UUID        `json:"id"`
+	EventID         pgtype.UUID        `json:"event_id"`
+	NominationID    pgtype.UUID        `json:"nomination_id"`
+	RegistrationFee pgtype.Numeric     `json:"registration_fee"`
+	Settings        []byte             `json:"settings"`
+	IsActive        pgtype.Bool        `json:"is_active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	VkID            pgtype.Int8        `json:"vk_id"`
-	VkFirstName     pgtype.Text        `json:"vk_first_name"`
-	VkLastName      pgtype.Text        `json:"vk_last_name"`
-	VkPhotoUrl      pgtype.Text        `json:"vk_photo_url"`
-	VkConfirmedAt   pgtype.Timestamptz `json:"vk_confirmed_at"`
-	VkMessageSentAt pgtype.Timestamptz `json:"vk_message_sent_at"`
-	VkMessageStatus pgtype.Text        `json:"vk_message_status"`
+}
+
+type EventPenaltyRecord struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	EventID        pgtype.UUID        `json:"event_id"`
+	RegistrationID pgtype.UUID        `json:"registration_id"`
+	PerformanceID  pgtype.UUID        `json:"performance_id"`
+	PenaltyTypeID  pgtype.UUID        `json:"penalty_type_id"`
+	Units          pgtype.Numeric     `json:"units"`
+	Reason         pgtype.Text        `json:"reason"`
+	IssuedBy       pgtype.UUID        `json:"issued_by"`
+	IssuedAt       pgtype.Timestamptz `json:"issued_at"`
+}
+
+type EventPenaltyType struct {
+	ID                 pgtype.UUID        `json:"id"`
+	ProfileID          pgtype.UUID        `json:"profile_id"`
+	EventID            pgtype.UUID        `json:"event_id"`
+	Name               string             `json:"name"`
+	DeductionPerUnit   pgtype.Numeric     `json:"deduction_per_unit"`
+	UnitLabel          pgtype.Text        `json:"unit_label"`
+	IsDisqualification bool               `json:"is_disqualification"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EventPeoplesChoiceVote struct {
+	ID                pgtype.UUID        `json:"id"`
+	EventID           pgtype.UUID        `json:"event_id"`
+	PerformanceID     pgtype.UUID        `json:"performance_id"`
+	DeviceFingerprint string             `json:"device_fingerprint"`
+	IpAddress         pgtype.Text        `json:"ip_address"`
+	VotedAt           pgtype.Timestamptz `json:"voted_at"`
+}
+
+type EventPricingDeadline struct {
+	ID              pgtype.UUID        `json:"id"`
+	ProfileID       pgtype.UUID        `json:"profile_id"`
+	EventID         pgtype.UUID        `json:"event_id"`
+	Name            string             `json:"name"`
+	ValidUntil      pgtype.Timestamptz `json:"valid_until"`
+	ModifierPercent pgtype.Numeric     `json:"modifier_percent"`
+	SortOrder       pgtype.Int4        `json:"sort_order"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EventPricingRule struct {
+	ID                     pgtype.UUID        `json:"id"`
+	ProfileID              pgtype.UUID        `json:"profile_id"`
+	EventID                pgtype.UUID        `json:"event_id"`
+	SizeID                 pgtype.UUID        `json:"size_id"`
+	LevelID                pgtype.UUID        `json:"level_id"`
+	AgeGroupID             pgtype.UUID        `json:"age_group_id"`
+	NominationID           pgtype.UUID        `json:"nomination_id"`
+	PricePerParticipant    pgtype.Numeric     `json:"price_per_participant"`
+	PriceFlat              pgtype.Numeric     `json:"price_flat"`
+	AppliesTo              string             `json:"applies_to"`
+	Discount2ndPercent     pgtype.Numeric     `json:"discount_2nd_percent"`
+	Discount3rdPlusPercent pgtype.Numeric     `json:"discount_3rd_plus_percent"`
+	SpecificityScore       int32              `json:"specificity_score"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EventPrizeFund struct {
+	ID           pgtype.UUID        `json:"id"`
+	ProfileID    pgtype.UUID        `json:"profile_id"`
+	EventID      pgtype.UUID        `json:"event_id"`
+	NominationID pgtype.UUID        `json:"nomination_id"`
+	TotalAmount  pgtype.Numeric     `json:"total_amount"`
+	Distribution []byte             `json:"distribution"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EventPrizePayout struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	EventID        pgtype.UUID        `json:"event_id"`
+	PrizeFundID    pgtype.UUID        `json:"prize_fund_id"`
+	RegistrationID pgtype.UUID        `json:"registration_id"`
+	Place          int32              `json:"place"`
+	Amount         pgtype.Numeric     `json:"amount"`
+	IsPaid         bool               `json:"is_paid"`
+	PaidAt         pgtype.Timestamptz `json:"paid_at"`
+	Notes          pgtype.Text        `json:"notes"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventRegistration struct {
+	ID                       pgtype.UUID        `json:"id"`
+	ProfileID                pgtype.UUID        `json:"profile_id"`
+	EventID                  pgtype.UUID        `json:"event_id"`
+	CustomerID               pgtype.UUID        `json:"customer_id"`
+	Name                     string             `json:"name"`
+	Email                    pgtype.Text        `json:"email"`
+	Phone                    pgtype.Text        `json:"phone"`
+	Company                  pgtype.Text        `json:"company"`
+	Position                 pgtype.Text        `json:"position"`
+	Status                   string             `json:"status"`
+	CheckedInAt              pgtype.Timestamptz `json:"checked_in_at"`
+	QrCode                   pgtype.Text        `json:"qr_code"`
+	Notes                    pgtype.Text        `json:"notes"`
+	Answers                  []byte             `json:"answers"`
+	CustomFields             []byte             `json:"custom_fields"`
+	RegisteredAt             pgtype.Timestamptz `json:"registered_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	VkID                     pgtype.Int8        `json:"vk_id"`
+	VkFirstName              pgtype.Text        `json:"vk_first_name"`
+	VkLastName               pgtype.Text        `json:"vk_last_name"`
+	VkPhotoUrl               pgtype.Text        `json:"vk_photo_url"`
+	VkConfirmedAt            pgtype.Timestamptz `json:"vk_confirmed_at"`
+	VkMessageSentAt          pgtype.Timestamptz `json:"vk_message_sent_at"`
+	VkMessageStatus          pgtype.Text        `json:"vk_message_status"`
+	NominationID             pgtype.UUID        `json:"nomination_id"`
+	TeamSize                 pgtype.Int4        `json:"team_size"`
+	RegCity                  pgtype.Text        `json:"reg_city"`
+	VkContact                pgtype.Text        `json:"vk_contact"`
+	Contact2                 pgtype.Text        `json:"contact2"`
+	CoachSpecialistID        pgtype.UUID        `json:"coach_specialist_id"`
+	StudioCustomerID         pgtype.UUID        `json:"studio_customer_id"`
+	AgeGroupID               pgtype.UUID        `json:"age_group_id"`
+	LevelID                  pgtype.UUID        `json:"level_id"`
+	SizeID                   pgtype.UUID        `json:"size_id"`
+	ConsentPersonalData      bool               `json:"consent_personal_data"`
+	ConsentPersonalDataAt    pgtype.Timestamptz `json:"consent_personal_data_at"`
+	IsCalibration            bool               `json:"is_calibration"`
+	InsurancePolicyNumber    pgtype.Text        `json:"insurance_policy_number"`
+	InsuranceValidFrom       pgtype.Date        `json:"insurance_valid_from"`
+	InsuranceValidUntil      pgtype.Date        `json:"insurance_valid_until"`
+	InsuranceDocumentMediaID pgtype.UUID        `json:"insurance_document_media_id"`
 }
 
 type EventReview struct {
@@ -529,6 +1336,31 @@ type EventSchedule struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type EventScoreCriterium struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	EventID     pgtype.UUID        `json:"event_id"`
+	Name        string             `json:"name"`
+	MaxScore    pgtype.Numeric     `json:"max_score"`
+	OrderIndex  int32              `json:"order_index"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Description pgtype.Text        `json:"description"`
+}
+
+type EventSpecialAward struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	EventID        pgtype.UUID        `json:"event_id"`
+	Title          string             `json:"title"`
+	RegistrationID pgtype.UUID        `json:"registration_id"`
+	Description    pgtype.Text        `json:"description"`
+	AwardedBy      pgtype.UUID        `json:"awarded_by"`
+	AwardedAt      pgtype.Timestamptz `json:"awarded_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type EventSponsor struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProfileID    pgtype.UUID        `json:"profile_id"`
@@ -541,6 +1373,170 @@ type EventSponsor struct {
 	OrderIndex   pgtype.Int4        `json:"order_index"`
 	CustomFields []byte             `json:"custom_fields"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventsPerformance struct {
+	ID                   pgtype.UUID        `json:"id"`
+	ProfileID            pgtype.UUID        `json:"profile_id"`
+	EventID              pgtype.UUID        `json:"event_id"`
+	StageID              pgtype.UUID        `json:"stage_id"`
+	Title                string             `json:"title"`
+	PerformerName        pgtype.Text        `json:"performer_name"`
+	Description          pgtype.Text        `json:"description"`
+	StartTime            pgtype.Timestamptz `json:"start_time"`
+	DurationMinutes      pgtype.Int4        `json:"duration_minutes"`
+	SetupMinutes         pgtype.Int4        `json:"setup_minutes"`
+	Status               string             `json:"status"`
+	PerformersCount      pgtype.Int4        `json:"performers_count"`
+	LightingPreset       pgtype.Text        `json:"lighting_preset"`
+	LightingNotes        pgtype.Text        `json:"lighting_notes"`
+	SoundNotes           pgtype.Text        `json:"sound_notes"`
+	StageNotes           pgtype.Text        `json:"stage_notes"`
+	TechnicalRider       []byte             `json:"technical_rider"`
+	OrderIndex           pgtype.Int4        `json:"order_index"`
+	CustomFields         []byte             `json:"custom_fields"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	IsReserve            bool               `json:"is_reserve"`
+	ReservePriority      pgtype.Int4        `json:"reserve_priority"`
+	StartedAt            pgtype.Timestamptz `json:"started_at"`
+	EndedAt              pgtype.Timestamptz `json:"ended_at"`
+	SoundcheckedAt       pgtype.Timestamptz `json:"soundchecked_at"`
+	SoundcheckedBy       pgtype.UUID        `json:"soundchecked_by"`
+	IsPause              bool               `json:"is_pause"`
+	PauseReason          pgtype.Text        `json:"pause_reason"`
+	PauseDurationSeconds pgtype.Int4        `json:"pause_duration_seconds"`
+}
+
+type EventsPerformanceParticipant struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	PerformanceID  pgtype.UUID        `json:"performance_id"`
+	RegistrationID pgtype.UUID        `json:"registration_id"`
+	Role           pgtype.Text        `json:"role"`
+	OrderIndex     pgtype.Int4        `json:"order_index"`
+	Notes          pgtype.Text        `json:"notes"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventsPerformancePhonogram struct {
+	ID            pgtype.UUID `json:"id"`
+	PerformanceID pgtype.UUID `json:"performance_id"`
+	PhonogramID   pgtype.UUID `json:"phonogram_id"`
+	OrderIndex    pgtype.Int4 `json:"order_index"`
+	Notes         pgtype.Text `json:"notes"`
+}
+
+type EventsPerformanceProp struct {
+	ID            pgtype.UUID        `json:"id"`
+	ProfileID     pgtype.UUID        `json:"profile_id"`
+	PerformanceID pgtype.UUID        `json:"performance_id"`
+	Name          string             `json:"name"`
+	Description   pgtype.Text        `json:"description"`
+	Quantity      pgtype.Int4        `json:"quantity"`
+	OrderIndex    pgtype.Int4        `json:"order_index"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventsPerformanceReplacement struct {
+	ID                   pgtype.UUID        `json:"id"`
+	ProfileID            pgtype.UUID        `json:"profile_id"`
+	EventID              pgtype.UUID        `json:"event_id"`
+	RemovedPerformanceID pgtype.UUID        `json:"removed_performance_id"`
+	AddedPerformanceID   pgtype.UUID        `json:"added_performance_id"`
+	Reason               pgtype.Text        `json:"reason"`
+	DecidedBy            pgtype.UUID        `json:"decided_by"`
+	DecidedAt            pgtype.Timestamptz `json:"decided_at"`
+}
+
+type EventsPerformanceSubmission struct {
+	ID                 pgtype.UUID        `json:"id"`
+	ProfileID          pgtype.UUID        `json:"profile_id"`
+	EventID            pgtype.UUID        `json:"event_id"`
+	RegistrationID     pgtype.UUID        `json:"registration_id"`
+	RequestedStageID   pgtype.UUID        `json:"requested_stage_id"`
+	Title              string             `json:"title"`
+	Description        pgtype.Text        `json:"description"`
+	PerformersCount    pgtype.Int4        `json:"performers_count"`
+	LightingNotes      pgtype.Text        `json:"lighting_notes"`
+	SoundNotes         pgtype.Text        `json:"sound_notes"`
+	StageNotes         pgtype.Text        `json:"stage_notes"`
+	TechnicalRider     []byte             `json:"technical_rider"`
+	PreferredStartTime pgtype.Timestamptz `json:"preferred_start_time"`
+	DurationMinutes    pgtype.Int4        `json:"duration_minutes"`
+	Status             string             `json:"status"`
+	ReviewerNotes      pgtype.Text        `json:"reviewer_notes"`
+	ReviewedBy         pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt         pgtype.Timestamptz `json:"reviewed_at"`
+	PerformanceID      pgtype.UUID        `json:"performance_id"`
+	SubmittedAt        pgtype.Timestamptz `json:"submitted_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EventsPhonogram struct {
+	ID               pgtype.UUID        `json:"id"`
+	ProfileID        pgtype.UUID        `json:"profile_id"`
+	EventID          pgtype.UUID        `json:"event_id"`
+	MediaID          pgtype.UUID        `json:"media_id"`
+	Title            string             `json:"title"`
+	Artist           pgtype.Text        `json:"artist"`
+	DurationSeconds  pgtype.Int4        `json:"duration_seconds"`
+	Notes            pgtype.Text        `json:"notes"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	TrimStartSeconds pgtype.Int4        `json:"trim_start_seconds"`
+	TrimEndSeconds   pgtype.Int4        `json:"trim_end_seconds"`
+	FadeInSeconds    pgtype.Numeric     `json:"fade_in_seconds"`
+	FadeOutSeconds   pgtype.Numeric     `json:"fade_out_seconds"`
+	BackupMediaID    pgtype.UUID        `json:"backup_media_id"`
+}
+
+type EventsStage struct {
+	ID           pgtype.UUID        `json:"id"`
+	ProfileID    pgtype.UUID        `json:"profile_id"`
+	EventID      pgtype.UUID        `json:"event_id"`
+	Name         string             `json:"name"`
+	Description  pgtype.Text        `json:"description"`
+	Color        pgtype.Text        `json:"color"`
+	OrderIndex   pgtype.Int4        `json:"order_index"`
+	IsActive     pgtype.Bool        `json:"is_active"`
+	CustomFields []byte             `json:"custom_fields"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EventsSubmissionPhonogram struct {
+	ID                 pgtype.UUID `json:"id"`
+	SubmissionID       pgtype.UUID `json:"submission_id"`
+	PhonogramID        pgtype.UUID `json:"phonogram_id"`
+	OrderIndex         pgtype.Int4 `json:"order_index"`
+	Notes              pgtype.Text `json:"notes"`
+	PauseBeforeSeconds pgtype.Int4 `json:"pause_before_seconds"`
+}
+
+type EventsSubmissionProp struct {
+	ID           pgtype.UUID        `json:"id"`
+	ProfileID    pgtype.UUID        `json:"profile_id"`
+	SubmissionID pgtype.UUID        `json:"submission_id"`
+	Name         string             `json:"name"`
+	Description  pgtype.Text        `json:"description"`
+	Quantity     pgtype.Int4        `json:"quantity"`
+	OrderIndex   pgtype.Int4        `json:"order_index"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type Federation struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProfileID pgtype.UUID        `json:"profile_id"`
+	Code      string             `json:"code"`
+	Name      string             `json:"name"`
+	Website   pgtype.Text        `json:"website"`
+	LogoUrl   pgtype.Text        `json:"logo_url"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type GroomingService struct {
@@ -602,6 +1598,19 @@ type HotelRoom struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type JudgeCertification struct {
+	ID              pgtype.UUID        `json:"id"`
+	ProfileID       pgtype.UUID        `json:"profile_id"`
+	SpecialistID    pgtype.UUID        `json:"specialist_id"`
+	FederationID    pgtype.UUID        `json:"federation_id"`
+	LevelCode       string             `json:"level_code"`
+	ValidFrom       pgtype.Date        `json:"valid_from"`
+	ValidUntil      pgtype.Date        `json:"valid_until"`
+	DocumentMediaID pgtype.UUID        `json:"document_media_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Match struct {
 	ID               pgtype.UUID        `json:"id"`
 	ProfileID        pgtype.UUID        `json:"profile_id"`
@@ -633,6 +1642,46 @@ type Match struct {
 	CustomFields     []byte             `json:"custom_fields"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Medium struct {
+	ID               pgtype.UUID        `json:"id"`
+	ProfileID        pgtype.UUID        `json:"profile_id"`
+	Filename         string             `json:"filename"`
+	OriginalFilename string             `json:"original_filename"`
+	MimeType         string             `json:"mime_type"`
+	FileSize         int64              `json:"file_size"`
+	S3Key            string             `json:"s3_key"`
+	S3Bucket         string             `json:"s3_bucket"`
+	S3Url            string             `json:"s3_url"`
+	Width            pgtype.Int4        `json:"width"`
+	Height           pgtype.Int4        `json:"height"`
+	IsImage          pgtype.Bool        `json:"is_image"`
+	OriginalSize     pgtype.Int8        `json:"original_size"`
+	CompressionRatio pgtype.Numeric     `json:"compression_ratio"`
+	EntityType       pgtype.Text        `json:"entity_type"`
+	EntityID         pgtype.UUID        `json:"entity_id"`
+	IsPublic         pgtype.Bool        `json:"is_public"`
+	AccessToken      pgtype.Text        `json:"access_token"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+}
+
+type Nomination struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	ParentID    pgtype.UUID        `json:"parent_id"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	Level       int32              `json:"level"`
+	SortOrder   pgtype.Int4        `json:"sort_order"`
+	Settings    []byte             `json:"settings"`
+	IsActive    pgtype.Bool        `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
 }
 
 type Payment struct {
@@ -706,6 +1755,17 @@ type PaymentOrder struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 	CreatedBy        pgtype.UUID        `json:"created_by"`
+	RegistrationID   pgtype.UUID        `json:"registration_id"`
+}
+
+type PaymentOrderItem struct {
+	ID         pgtype.UUID        `json:"id"`
+	ProfileID  pgtype.UUID        `json:"profile_id"`
+	OrderID    pgtype.UUID        `json:"order_id"`
+	EntityType string             `json:"entity_type"`
+	EntityID   pgtype.UUID        `json:"entity_id"`
+	Amount     pgtype.Numeric     `json:"amount"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type Product struct {
@@ -789,26 +1849,12 @@ type ProfileSetting struct {
 	PrivateSettings []byte             `json:"private_settings"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-}
-
-type PromoCode struct {
-	ID                 pgtype.UUID        `json:"id"`
-	ProfileID          pgtype.UUID        `json:"profile_id"`
-	Code               string             `json:"code"`
-	Description        pgtype.Text        `json:"description"`
-	DiscountType       string             `json:"discount_type"`
-	DiscountValue      pgtype.Numeric     `json:"discount_value"`
-	MaxUses            pgtype.Int4        `json:"max_uses"`
-	UsedCount          pgtype.Int4        `json:"used_count"`
-	MaxUsesPerCustomer pgtype.Int4        `json:"max_uses_per_customer"`
-	MinOrderAmount     pgtype.Numeric     `json:"min_order_amount"`
-	ValidFrom          pgtype.Timestamptz `json:"valid_from"`
-	ValidUntil         pgtype.Timestamptz `json:"valid_until"`
-	TicketTypeIds      []pgtype.UUID      `json:"ticket_type_ids"`
-	IsActive           pgtype.Bool        `json:"is_active"`
-	CustomFields       []byte             `json:"custom_fields"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	SmtpHost        pgtype.Text        `json:"smtp_host"`
+	SmtpPort        pgtype.Int2        `json:"smtp_port"`
+	SmtpUser        pgtype.Text        `json:"smtp_user"`
+	SmtpPassword    pgtype.Text        `json:"smtp_password"`
+	SmtpFromName    pgtype.Text        `json:"smtp_from_name"`
+	SmtpFromEmail   pgtype.Text        `json:"smtp_from_email"`
 }
 
 type RealEstateApartment struct {
@@ -947,6 +1993,35 @@ type RealEstateProject struct {
 	CreatedBy         pgtype.UUID        `json:"created_by"`
 }
 
+type RegistrationCart struct {
+	ID                pgtype.UUID        `json:"id"`
+	ProfileID         pgtype.UUID        `json:"profile_id"`
+	EventID           pgtype.UUID        `json:"event_id"`
+	CoachSpecialistID pgtype.UUID        `json:"coach_specialist_id"`
+	StudioCustomerID  pgtype.UUID        `json:"studio_customer_id"`
+	Status            string             `json:"status"`
+	TotalAmount       pgtype.Numeric     `json:"total_amount"`
+	PaymentOrderID    pgtype.UUID        `json:"payment_order_id"`
+	SubmittedAt       pgtype.Timestamptz `json:"submitted_at"`
+	PaidAt            pgtype.Timestamptz `json:"paid_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RegistrationCartItem struct {
+	ID               pgtype.UUID        `json:"id"`
+	CartID           pgtype.UUID        `json:"cart_id"`
+	CustomerID       pgtype.UUID        `json:"customer_id"`
+	NominationID     pgtype.UUID        `json:"nomination_id"`
+	AgeGroupID       pgtype.UUID        `json:"age_group_id"`
+	LevelID          pgtype.UUID        `json:"level_id"`
+	SizeID           pgtype.UUID        `json:"size_id"`
+	CoParticipantIds []pgtype.UUID      `json:"co_participant_ids"`
+	CalculatedPrice  pgtype.Numeric     `json:"calculated_price"`
+	RegistrationID   pgtype.UUID        `json:"registration_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type ShortLink struct {
 	ID          pgtype.UUID        `json:"id"`
 	ProfileID   pgtype.UUID        `json:"profile_id"`
@@ -1075,6 +2150,22 @@ type Specialist struct {
 	IsDeleted      pgtype.Bool        `json:"is_deleted"`
 	CustomFields   []byte             `json:"custom_fields"`
 	AccountID      pgtype.UUID        `json:"account_id"`
+}
+
+type SpecialistRole struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProfileID pgtype.UUID        `json:"profile_id"`
+	Code      string             `json:"code"`
+	Label     string             `json:"label"`
+	IsSystem  bool               `json:"is_system"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type SpecialistRoleAssignment struct {
+	ID           pgtype.UUID        `json:"id"`
+	SpecialistID pgtype.UUID        `json:"specialist_id"`
+	RoleID       pgtype.UUID        `json:"role_id"`
+	AssignedAt   pgtype.Timestamptz `json:"assigned_at"`
 }
 
 // Регулярное расписание работы специалистов по дням недели
@@ -1385,76 +2476,72 @@ type TelegramWorkflowSchedule struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
-type Ticket struct {
+type TicketsConfig struct {
 	ID            pgtype.UUID        `json:"id"`
 	ProfileID     pgtype.UUID        `json:"profile_id"`
-	OrderID       pgtype.UUID        `json:"order_id"`
-	TicketTypeID  pgtype.UUID        `json:"ticket_type_id"`
-	SessionID     pgtype.UUID        `json:"session_id"`
-	SeatID        pgtype.UUID        `json:"seat_id"`
-	QrCode        string             `json:"qr_code"`
-	Barcode       pgtype.Text        `json:"barcode"`
+	Name          string             `json:"name"`
+	Description   pgtype.Text        `json:"description"`
+	PaymentFormID pgtype.UUID        `json:"payment_form_id"`
+	IsActive      pgtype.Bool        `json:"is_active"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	HallID        pgtype.UUID        `json:"hall_id"`
+}
+
+type TicketsHall struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	IsActive    pgtype.Bool        `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TicketsItem struct {
+	ID            pgtype.UUID        `json:"id"`
+	ProfileID     pgtype.UUID        `json:"profile_id"`
+	ConfigID      pgtype.UUID        `json:"config_id"`
+	SectorID      pgtype.UUID        `json:"sector_id"`
+	RowID         pgtype.UUID        `json:"row_id"`
+	SeatLabel     pgtype.Text        `json:"seat_label"`
+	Name          pgtype.Text        `json:"name"`
 	Price         pgtype.Numeric     `json:"price"`
-	AttendeeName  pgtype.Text        `json:"attendee_name"`
-	AttendeeEmail pgtype.Text        `json:"attendee_email"`
-	AttendeePhone pgtype.Text        `json:"attendee_phone"`
+	BuyerName     pgtype.Text        `json:"buyer_name"`
+	BuyerEmail    pgtype.Text        `json:"buyer_email"`
+	BuyerPhone    pgtype.Text        `json:"buyer_phone"`
+	QrCode        pgtype.Text        `json:"qr_code"`
 	Status        string             `json:"status"`
+	ReservedUntil pgtype.Timestamptz `json:"reserved_until"`
 	CheckedInAt   pgtype.Timestamptz `json:"checked_in_at"`
 	CheckedInBy   pgtype.UUID        `json:"checked_in_by"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
-type TicketOrder struct {
+type TicketsRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	SectorID    pgtype.UUID        `json:"sector_id"`
+	Label       string             `json:"label"`
+	OrderIndex  pgtype.Int4        `json:"order_index"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	HallID      pgtype.UUID        `json:"hall_id"`
+	SeatsCount  pgtype.Int4        `json:"seats_count"`
+	SourceRowID pgtype.UUID        `json:"source_row_id"`
+}
+
+type TicketsSector struct {
 	ID             pgtype.UUID        `json:"id"`
 	ProfileID      pgtype.UUID        `json:"profile_id"`
-	CustomerID     pgtype.UUID        `json:"customer_id"`
-	SessionID      pgtype.UUID        `json:"session_id"`
-	OrderNumber    string             `json:"order_number"`
-	BuyerName      pgtype.Text        `json:"buyer_name"`
-	BuyerEmail     pgtype.Text        `json:"buyer_email"`
-	BuyerPhone     pgtype.Text        `json:"buyer_phone"`
-	Subtotal       pgtype.Numeric     `json:"subtotal"`
-	DiscountAmount pgtype.Numeric     `json:"discount_amount"`
-	TotalAmount    pgtype.Numeric     `json:"total_amount"`
-	Status         string             `json:"status"`
-	PaymentMethod  pgtype.Text        `json:"payment_method"`
-	PaymentID      pgtype.Text        `json:"payment_id"`
-	PaidAt         pgtype.Timestamptz `json:"paid_at"`
-	PromoCodeID    pgtype.UUID        `json:"promo_code_id"`
-	Notes          pgtype.Text        `json:"notes"`
-	CustomFields   []byte             `json:"custom_fields"`
+	ConfigID       pgtype.UUID        `json:"config_id"`
+	Name           string             `json:"name"`
+	Color          pgtype.Text        `json:"color"`
+	OrderIndex     pgtype.Int4        `json:"order_index"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-}
-
-type TicketSession struct {
-	ID           pgtype.UUID        `json:"id"`
-	ProfileID    pgtype.UUID        `json:"profile_id"`
-	VenueID      pgtype.UUID        `json:"venue_id"`
-	Title        pgtype.Text        `json:"title"`
-	StartTime    pgtype.Timestamptz `json:"start_time"`
-	EndTime      pgtype.Timestamptz `json:"end_time"`
-	Capacity     pgtype.Int4        `json:"capacity"`
-	SoldCount    pgtype.Int4        `json:"sold_count"`
-	Status       string             `json:"status"`
-	CustomFields []byte             `json:"custom_fields"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-}
-
-type TicketType struct {
-	ID           pgtype.UUID        `json:"id"`
-	ProfileID    pgtype.UUID        `json:"profile_id"`
-	Name         string             `json:"name"`
-	Description  pgtype.Text        `json:"description"`
-	Price        pgtype.Numeric     `json:"price"`
-	MaxPerOrder  pgtype.Int4        `json:"max_per_order"`
-	MinPerOrder  pgtype.Int4        `json:"min_per_order"`
-	IsActive     pgtype.Bool        `json:"is_active"`
-	OrderIndex   pgtype.Int4        `json:"order_index"`
-	CustomFields []byte             `json:"custom_fields"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	HallID         pgtype.UUID        `json:"hall_id"`
+	SourceSectorID pgtype.UUID        `json:"source_sector_id"`
 }
 
 type TournamentsSetting struct {

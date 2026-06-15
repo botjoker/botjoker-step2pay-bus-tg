@@ -12,6 +12,80 @@ import (
 	"github.com/pgvector/pgvector-go"
 )
 
+const appendMessageCitation = `-- name: AppendMessageCitation :exec
+UPDATE agent_messages
+SET citations = COALESCE(citations, '[]'::jsonb) || $2::jsonb
+WHERE id = $1
+`
+
+type AppendMessageCitationParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Column2 []byte      `json:"column_2"`
+}
+
+func (q *Queries) AppendMessageCitation(ctx context.Context, arg AppendMessageCitationParams) error {
+	_, err := q.db.Exec(ctx, appendMessageCitation, arg.ID, arg.Column2)
+	return err
+}
+
+const countConversationMessages = `-- name: CountConversationMessages :one
+SELECT COUNT(*) FROM agent_messages WHERE conversation_id = $1
+`
+
+func (q *Queries) CountConversationMessages(ctx context.Context, conversationID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countConversationMessages, conversationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createAgentConversation = `-- name: CreateAgentConversation :one
+INSERT INTO agent_conversations
+  (profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id, title, summary, context, is_escalated, escalated_at, escalation_reason, is_active, last_message_at, created_at
+`
+
+type CreateAgentConversationParams struct {
+	ProfileID      pgtype.UUID `json:"profile_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	ChannelID      pgtype.UUID `json:"channel_id"`
+	ExternalUserID string      `json:"external_user_id"`
+	ExternalChatID pgtype.Text `json:"external_chat_id"`
+	CustomerID     pgtype.UUID `json:"customer_id"`
+}
+
+func (q *Queries) CreateAgentConversation(ctx context.Context, arg CreateAgentConversationParams) (AgentConversation, error) {
+	row := q.db.QueryRow(ctx, createAgentConversation,
+		arg.ProfileID,
+		arg.AgentID,
+		arg.ChannelID,
+		arg.ExternalUserID,
+		arg.ExternalChatID,
+		arg.CustomerID,
+	)
+	var i AgentConversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.AgentID,
+		&i.ChannelID,
+		&i.ExternalUserID,
+		&i.ExternalChatID,
+		&i.CustomerID,
+		&i.Title,
+		&i.Summary,
+		&i.Context,
+		&i.IsEscalated,
+		&i.EscalatedAt,
+		&i.EscalationReason,
+		&i.IsActive,
+		&i.LastMessageAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createConversation = `-- name: CreateConversation :one
 INSERT INTO telegram_conversations (
     id, profile_id, telegram_user_id, chat_id, context, last_message_at
@@ -90,6 +164,63 @@ func (q *Queries) CreateExecution(ctx context.Context, arg CreateExecutionParams
 		&i.ErrorMessage,
 		&i.StartedAt,
 		&i.FinishedAt,
+	)
+	return i, err
+}
+
+const deactivateActiveFact = `-- name: DeactivateActiveFact :exec
+UPDATE agent_conversation_facts
+SET superseded_by = id
+WHERE conversation_id = $1 AND field_key = $2 AND superseded_by IS NULL
+`
+
+type DeactivateActiveFactParams struct {
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	FieldKey       string      `json:"field_key"`
+}
+
+// Само-вытеснение активного факта по ключу (освобождает partial-unique индекс
+// перед вставкой нового значения). superseded_by = id → строка перестаёт быть активной.
+func (q *Queries) DeactivateActiveFact(ctx context.Context, arg DeactivateActiveFactParams) error {
+	_, err := q.db.Exec(ctx, deactivateActiveFact, arg.ConversationID, arg.FieldKey)
+	return err
+}
+
+const endTakeover = `-- name: EndTakeover :exec
+UPDATE agent_takeovers
+SET ended_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) EndTakeover(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, endTakeover, id)
+	return err
+}
+
+const getActiveTakeover = `-- name: GetActiveTakeover :one
+
+SELECT id, profile_id, conversation_id, operator_account_id, mode, reason, started_at, ended_at, return_to_ai, created_at FROM agent_takeovers
+WHERE conversation_id = $1 AND ended_at IS NULL
+LIMIT 1
+`
+
+// ============================================================
+// AGENT_TAKEOVERS
+// ============================================================
+func (q *Queries) GetActiveTakeover(ctx context.Context, conversationID pgtype.UUID) (AgentTakeover, error) {
+	row := q.db.QueryRow(ctx, getActiveTakeover, conversationID)
+	var i AgentTakeover
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.ConversationID,
+		&i.OperatorAccountID,
+		&i.Mode,
+		&i.Reason,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.ReturnToAi,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -206,6 +337,320 @@ func (q *Queries) GetActiveWorkflowsByProfile(ctx context.Context, profileID pgt
 	return items, nil
 }
 
+const getAgent = `-- name: GetAgent :one
+
+SELECT id, profile_id, slug, name, description, avatar_media_id,
+       persona, greeting_message, fallback_message, safety_disclaimer,
+       llm_provider, llm_model, llm_credentials_id, llm_temperature,
+       llm_max_tokens, llm_max_iterations,
+       embedding_provider, embedding_model, embedding_credentials_id, embedding_dim,
+       rag_enabled, rag_top_k, rag_min_score,
+       default_language, auto_detect_language, allowed_languages,
+       vision_enabled, vision_model,
+       takeover_enabled, takeover_notify_channel, takeover_notify_target,
+       proactive_enabled,
+       brand_color, brand_logo_media_id, brand_powered_by_hidden,
+       plan_tier, share_facts_across_channels,
+       is_active, is_deleted,
+       created_at, updated_at, created_by, updated_by
+FROM agents
+WHERE id = $1 AND is_deleted = false
+`
+
+type GetAgentRow struct {
+	ID                       pgtype.UUID        `json:"id"`
+	ProfileID                pgtype.UUID        `json:"profile_id"`
+	Slug                     string             `json:"slug"`
+	Name                     string             `json:"name"`
+	Description              pgtype.Text        `json:"description"`
+	AvatarMediaID            pgtype.UUID        `json:"avatar_media_id"`
+	Persona                  string             `json:"persona"`
+	GreetingMessage          pgtype.Text        `json:"greeting_message"`
+	FallbackMessage          pgtype.Text        `json:"fallback_message"`
+	SafetyDisclaimer         pgtype.Text        `json:"safety_disclaimer"`
+	LlmProvider              string             `json:"llm_provider"`
+	LlmModel                 string             `json:"llm_model"`
+	LlmCredentialsID         pgtype.UUID        `json:"llm_credentials_id"`
+	LlmTemperature           pgtype.Numeric     `json:"llm_temperature"`
+	LlmMaxTokens             pgtype.Int4        `json:"llm_max_tokens"`
+	LlmMaxIterations         pgtype.Int4        `json:"llm_max_iterations"`
+	EmbeddingProvider        pgtype.Text        `json:"embedding_provider"`
+	EmbeddingModel           pgtype.Text        `json:"embedding_model"`
+	EmbeddingCredentialsID   pgtype.UUID        `json:"embedding_credentials_id"`
+	EmbeddingDim             pgtype.Int4        `json:"embedding_dim"`
+	RagEnabled               bool               `json:"rag_enabled"`
+	RagTopK                  pgtype.Int4        `json:"rag_top_k"`
+	RagMinScore              pgtype.Numeric     `json:"rag_min_score"`
+	DefaultLanguage          pgtype.Text        `json:"default_language"`
+	AutoDetectLanguage       pgtype.Bool        `json:"auto_detect_language"`
+	AllowedLanguages         []string           `json:"allowed_languages"`
+	VisionEnabled            pgtype.Bool        `json:"vision_enabled"`
+	VisionModel              pgtype.Text        `json:"vision_model"`
+	TakeoverEnabled          pgtype.Bool        `json:"takeover_enabled"`
+	TakeoverNotifyChannel    pgtype.Text        `json:"takeover_notify_channel"`
+	TakeoverNotifyTarget     pgtype.Text        `json:"takeover_notify_target"`
+	ProactiveEnabled         pgtype.Bool        `json:"proactive_enabled"`
+	BrandColor               pgtype.Text        `json:"brand_color"`
+	BrandLogoMediaID         pgtype.UUID        `json:"brand_logo_media_id"`
+	BrandPoweredByHidden     pgtype.Bool        `json:"brand_powered_by_hidden"`
+	PlanTier                 pgtype.Text        `json:"plan_tier"`
+	ShareFactsAcrossChannels pgtype.Bool        `json:"share_facts_across_channels"`
+	IsActive                 bool               `json:"is_active"`
+	IsDeleted                bool               `json:"is_deleted"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy                pgtype.UUID        `json:"created_by"`
+	UpdatedBy                pgtype.UUID        `json:"updated_by"`
+}
+
+// ============================================================
+// ============  AGENTS MODULE (Phase 2 runtime)  =============
+// ============================================================
+// read-only для runtime; CRUD остаётся в backend (Rust).
+// ВНИМАНИЕ: agents.proactive_quiet_hours_local (TSTZRANGE) НЕ селектим —
+// pgx/sqlc не умеет этот тип; proactive отложен в V1.1.
+func (q *Queries) GetAgent(ctx context.Context, id pgtype.UUID) (GetAgentRow, error) {
+	row := q.db.QueryRow(ctx, getAgent, id)
+	var i GetAgentRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.AvatarMediaID,
+		&i.Persona,
+		&i.GreetingMessage,
+		&i.FallbackMessage,
+		&i.SafetyDisclaimer,
+		&i.LlmProvider,
+		&i.LlmModel,
+		&i.LlmCredentialsID,
+		&i.LlmTemperature,
+		&i.LlmMaxTokens,
+		&i.LlmMaxIterations,
+		&i.EmbeddingProvider,
+		&i.EmbeddingModel,
+		&i.EmbeddingCredentialsID,
+		&i.EmbeddingDim,
+		&i.RagEnabled,
+		&i.RagTopK,
+		&i.RagMinScore,
+		&i.DefaultLanguage,
+		&i.AutoDetectLanguage,
+		&i.AllowedLanguages,
+		&i.VisionEnabled,
+		&i.VisionModel,
+		&i.TakeoverEnabled,
+		&i.TakeoverNotifyChannel,
+		&i.TakeoverNotifyTarget,
+		&i.ProactiveEnabled,
+		&i.BrandColor,
+		&i.BrandLogoMediaID,
+		&i.BrandPoweredByHidden,
+		&i.PlanTier,
+		&i.ShareFactsAcrossChannels,
+		&i.IsActive,
+		&i.IsDeleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
+const getAgentBySlug = `-- name: GetAgentBySlug :one
+SELECT id, profile_id, slug, name, description, avatar_media_id,
+       persona, greeting_message, fallback_message, safety_disclaimer,
+       llm_provider, llm_model, llm_credentials_id, llm_temperature,
+       llm_max_tokens, llm_max_iterations,
+       embedding_provider, embedding_model, embedding_credentials_id, embedding_dim,
+       rag_enabled, rag_top_k, rag_min_score,
+       default_language, auto_detect_language, allowed_languages,
+       vision_enabled, vision_model,
+       takeover_enabled, takeover_notify_channel, takeover_notify_target,
+       proactive_enabled,
+       brand_color, brand_logo_media_id, brand_powered_by_hidden,
+       plan_tier, share_facts_across_channels,
+       is_active, is_deleted,
+       created_at, updated_at, created_by, updated_by
+FROM agents
+WHERE profile_id = $1 AND slug = $2 AND is_deleted = false
+`
+
+type GetAgentBySlugParams struct {
+	ProfileID pgtype.UUID `json:"profile_id"`
+	Slug      string      `json:"slug"`
+}
+
+type GetAgentBySlugRow struct {
+	ID                       pgtype.UUID        `json:"id"`
+	ProfileID                pgtype.UUID        `json:"profile_id"`
+	Slug                     string             `json:"slug"`
+	Name                     string             `json:"name"`
+	Description              pgtype.Text        `json:"description"`
+	AvatarMediaID            pgtype.UUID        `json:"avatar_media_id"`
+	Persona                  string             `json:"persona"`
+	GreetingMessage          pgtype.Text        `json:"greeting_message"`
+	FallbackMessage          pgtype.Text        `json:"fallback_message"`
+	SafetyDisclaimer         pgtype.Text        `json:"safety_disclaimer"`
+	LlmProvider              string             `json:"llm_provider"`
+	LlmModel                 string             `json:"llm_model"`
+	LlmCredentialsID         pgtype.UUID        `json:"llm_credentials_id"`
+	LlmTemperature           pgtype.Numeric     `json:"llm_temperature"`
+	LlmMaxTokens             pgtype.Int4        `json:"llm_max_tokens"`
+	LlmMaxIterations         pgtype.Int4        `json:"llm_max_iterations"`
+	EmbeddingProvider        pgtype.Text        `json:"embedding_provider"`
+	EmbeddingModel           pgtype.Text        `json:"embedding_model"`
+	EmbeddingCredentialsID   pgtype.UUID        `json:"embedding_credentials_id"`
+	EmbeddingDim             pgtype.Int4        `json:"embedding_dim"`
+	RagEnabled               bool               `json:"rag_enabled"`
+	RagTopK                  pgtype.Int4        `json:"rag_top_k"`
+	RagMinScore              pgtype.Numeric     `json:"rag_min_score"`
+	DefaultLanguage          pgtype.Text        `json:"default_language"`
+	AutoDetectLanguage       pgtype.Bool        `json:"auto_detect_language"`
+	AllowedLanguages         []string           `json:"allowed_languages"`
+	VisionEnabled            pgtype.Bool        `json:"vision_enabled"`
+	VisionModel              pgtype.Text        `json:"vision_model"`
+	TakeoverEnabled          pgtype.Bool        `json:"takeover_enabled"`
+	TakeoverNotifyChannel    pgtype.Text        `json:"takeover_notify_channel"`
+	TakeoverNotifyTarget     pgtype.Text        `json:"takeover_notify_target"`
+	ProactiveEnabled         pgtype.Bool        `json:"proactive_enabled"`
+	BrandColor               pgtype.Text        `json:"brand_color"`
+	BrandLogoMediaID         pgtype.UUID        `json:"brand_logo_media_id"`
+	BrandPoweredByHidden     pgtype.Bool        `json:"brand_powered_by_hidden"`
+	PlanTier                 pgtype.Text        `json:"plan_tier"`
+	ShareFactsAcrossChannels pgtype.Bool        `json:"share_facts_across_channels"`
+	IsActive                 bool               `json:"is_active"`
+	IsDeleted                bool               `json:"is_deleted"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy                pgtype.UUID        `json:"created_by"`
+	UpdatedBy                pgtype.UUID        `json:"updated_by"`
+}
+
+func (q *Queries) GetAgentBySlug(ctx context.Context, arg GetAgentBySlugParams) (GetAgentBySlugRow, error) {
+	row := q.db.QueryRow(ctx, getAgentBySlug, arg.ProfileID, arg.Slug)
+	var i GetAgentBySlugRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.AvatarMediaID,
+		&i.Persona,
+		&i.GreetingMessage,
+		&i.FallbackMessage,
+		&i.SafetyDisclaimer,
+		&i.LlmProvider,
+		&i.LlmModel,
+		&i.LlmCredentialsID,
+		&i.LlmTemperature,
+		&i.LlmMaxTokens,
+		&i.LlmMaxIterations,
+		&i.EmbeddingProvider,
+		&i.EmbeddingModel,
+		&i.EmbeddingCredentialsID,
+		&i.EmbeddingDim,
+		&i.RagEnabled,
+		&i.RagTopK,
+		&i.RagMinScore,
+		&i.DefaultLanguage,
+		&i.AutoDetectLanguage,
+		&i.AllowedLanguages,
+		&i.VisionEnabled,
+		&i.VisionModel,
+		&i.TakeoverEnabled,
+		&i.TakeoverNotifyChannel,
+		&i.TakeoverNotifyTarget,
+		&i.ProactiveEnabled,
+		&i.BrandColor,
+		&i.BrandLogoMediaID,
+		&i.BrandPoweredByHidden,
+		&i.PlanTier,
+		&i.ShareFactsAcrossChannels,
+		&i.IsActive,
+		&i.IsDeleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
+const getAgentConversation = `-- name: GetAgentConversation :one
+
+SELECT id, profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id, title, summary, context, is_escalated, escalated_at, escalation_reason, is_active, last_message_at, created_at FROM agent_conversations WHERE id = $1
+`
+
+// ============================================================
+// AGENT_CONVERSATIONS
+// ============================================================
+// get-or-create реализован в Go двумя запросами (надёжнее для sqlc, чем
+// CTE с UNION ALL + INSERT...RETURNING из исходного плана).
+func (q *Queries) GetAgentConversation(ctx context.Context, id pgtype.UUID) (AgentConversation, error) {
+	row := q.db.QueryRow(ctx, getAgentConversation, id)
+	var i AgentConversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.AgentID,
+		&i.ChannelID,
+		&i.ExternalUserID,
+		&i.ExternalChatID,
+		&i.CustomerID,
+		&i.Title,
+		&i.Summary,
+		&i.Context,
+		&i.IsEscalated,
+		&i.EscalatedAt,
+		&i.EscalationReason,
+		&i.IsActive,
+		&i.LastMessageAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getAgentConversationByExternal = `-- name: GetAgentConversationByExternal :one
+SELECT id, profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id, title, summary, context, is_escalated, escalated_at, escalation_reason, is_active, last_message_at, created_at FROM agent_conversations
+WHERE agent_id = $1 AND channel_id = $2 AND external_user_id = $3 AND is_active = true
+LIMIT 1
+`
+
+type GetAgentConversationByExternalParams struct {
+	AgentID        pgtype.UUID `json:"agent_id"`
+	ChannelID      pgtype.UUID `json:"channel_id"`
+	ExternalUserID string      `json:"external_user_id"`
+}
+
+func (q *Queries) GetAgentConversationByExternal(ctx context.Context, arg GetAgentConversationByExternalParams) (AgentConversation, error) {
+	row := q.db.QueryRow(ctx, getAgentConversationByExternal, arg.AgentID, arg.ChannelID, arg.ExternalUserID)
+	var i AgentConversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.AgentID,
+		&i.ChannelID,
+		&i.ExternalUserID,
+		&i.ExternalChatID,
+		&i.CustomerID,
+		&i.Title,
+		&i.Summary,
+		&i.Context,
+		&i.IsEscalated,
+		&i.EscalatedAt,
+		&i.EscalationReason,
+		&i.IsActive,
+		&i.LastMessageAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getAllActiveBots = `-- name: GetAllActiveBots :many
 SELECT 
     id, profile_id, bot_token, bot_username, bot_name, is_active,
@@ -252,6 +697,91 @@ func (q *Queries) GetAllActiveBots(ctx context.Context) ([]TelegramBot, error) {
 	return items, nil
 }
 
+const getChannel = `-- name: GetChannel :one
+
+SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at FROM agent_channels
+WHERE id = $1 AND is_deleted = false
+`
+
+// ============================================================
+// AGENT_CHANNELS
+// ============================================================
+func (q *Queries) GetChannel(ctx context.Context, id pgtype.UUID) (AgentChannel, error) {
+	row := q.db.QueryRow(ctx, getChannel, id)
+	var i AgentChannel
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Name,
+		&i.TgBotToken,
+		&i.TgBotUsername,
+		&i.VkGroupID,
+		&i.VkAccessToken,
+		&i.VkSecretKey,
+		&i.MaxBotToken,
+		&i.AvitoUserID,
+		&i.AvitoClientID,
+		&i.AvitoClientSecret,
+		&i.AvitoAccessToken,
+		&i.AvitoTokenExpiresAt,
+		&i.WebSlug,
+		&i.WebIsPublic,
+		&i.WebRateLimitPerMin,
+		&i.WebAllowedDomains,
+		&i.WebCustomDomain,
+		&i.IsActive,
+		&i.IsDeleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getChannelByWebSlug = `-- name: GetChannelByWebSlug :one
+SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at FROM agent_channels
+WHERE profile_id = $1 AND web_slug = $2 AND is_active = true AND is_deleted = false
+`
+
+type GetChannelByWebSlugParams struct {
+	ProfileID pgtype.UUID `json:"profile_id"`
+	WebSlug   pgtype.Text `json:"web_slug"`
+}
+
+func (q *Queries) GetChannelByWebSlug(ctx context.Context, arg GetChannelByWebSlugParams) (AgentChannel, error) {
+	row := q.db.QueryRow(ctx, getChannelByWebSlug, arg.ProfileID, arg.WebSlug)
+	var i AgentChannel
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Name,
+		&i.TgBotToken,
+		&i.TgBotUsername,
+		&i.VkGroupID,
+		&i.VkAccessToken,
+		&i.VkSecretKey,
+		&i.MaxBotToken,
+		&i.AvitoUserID,
+		&i.AvitoClientID,
+		&i.AvitoClientSecret,
+		&i.AvitoAccessToken,
+		&i.AvitoTokenExpiresAt,
+		&i.WebSlug,
+		&i.WebIsPublic,
+		&i.WebRateLimitPerMin,
+		&i.WebAllowedDomains,
+		&i.WebCustomDomain,
+		&i.IsActive,
+		&i.IsDeleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getConversation = `-- name: GetConversation :one
 SELECT id, profile_id, telegram_user_id, chat_id, context, last_message_at
 FROM telegram_conversations
@@ -274,6 +804,42 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.ChatID,
 		&i.Context,
 		&i.LastMessageAt,
+	)
+	return i, err
+}
+
+const getCurrentUsage = `-- name: GetCurrentUsage :one
+
+SELECT id, profile_id, period_start, period_end, messages_count, tokens_in, tokens_out, cost_usd_raw, cost_rub_billed, embeddings_generated, proactive_sent, storage_mb, soft_cap_hit, hard_cap_hit, soft_cap_notified_at, hard_cap_notified_at, created_at, updated_at FROM agent_billing_usage
+WHERE profile_id = $1 AND period_start = date_trunc('month', NOW())::date
+LIMIT 1
+`
+
+// ============================================================
+// BILLING
+// ============================================================
+func (q *Queries) GetCurrentUsage(ctx context.Context, profileID pgtype.UUID) (AgentBillingUsage, error) {
+	row := q.db.QueryRow(ctx, getCurrentUsage, profileID)
+	var i AgentBillingUsage
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.PeriodStart,
+		&i.PeriodEnd,
+		&i.MessagesCount,
+		&i.TokensIn,
+		&i.TokensOut,
+		&i.CostUsdRaw,
+		&i.CostRubBilled,
+		&i.EmbeddingsGenerated,
+		&i.ProactiveSent,
+		&i.StorageMb,
+		&i.SoftCapHit,
+		&i.HardCapHit,
+		&i.SoftCapNotifiedAt,
+		&i.HardCapNotifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -315,6 +881,120 @@ func (q *Queries) GetKnowledgeBase(ctx context.Context, profileID pgtype.UUID) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const getKnowledgeSource = `-- name: GetKnowledgeSource :one
+
+SELECT id, profile_id, agent_id, source_type, title, file_media_id, file_format, source_url, raw_content, status, error_message, chunks_count, metadata, is_active, is_deleted, created_at, updated_at, indexed_at FROM agent_knowledge_sources WHERE id = $1
+`
+
+// ============================================================
+// KNOWLEDGE (RAG sidecar пишет chunks напрямую через asyncpg в Python;
+// runtime только читает source + обновляет статус)
+// ============================================================
+func (q *Queries) GetKnowledgeSource(ctx context.Context, id pgtype.UUID) (AgentKnowledgeSource, error) {
+	row := q.db.QueryRow(ctx, getKnowledgeSource, id)
+	var i AgentKnowledgeSource
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.AgentID,
+		&i.SourceType,
+		&i.Title,
+		&i.FileMediaID,
+		&i.FileFormat,
+		&i.SourceUrl,
+		&i.RawContent,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.ChunksCount,
+		&i.Metadata,
+		&i.IsActive,
+		&i.IsDeleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IndexedAt,
+	)
+	return i, err
+}
+
+const getMessageBrief = `-- name: GetMessageBrief :one
+SELECT content, conversation_id, created_at
+FROM agent_messages WHERE id = $1
+`
+
+type GetMessageBriefRow struct {
+	Content        pgtype.Text        `json:"content"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetMessageBrief(ctx context.Context, id pgtype.UUID) (GetMessageBriefRow, error) {
+	row := q.db.QueryRow(ctx, getMessageBrief, id)
+	var i GetMessageBriefRow
+	err := row.Scan(&i.Content, &i.ConversationID, &i.CreatedAt)
+	return i, err
+}
+
+const getPrecedingUserMessage = `-- name: GetPrecedingUserMessage :one
+SELECT content FROM agent_messages
+WHERE conversation_id = $1
+  AND role = 'user'
+  AND created_at < $2
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetPrecedingUserMessageParams struct {
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Before         pgtype.Timestamptz `json:"before"`
+}
+
+func (q *Queries) GetPrecedingUserMessage(ctx context.Context, arg GetPrecedingUserMessageParams) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getPrecedingUserMessage, arg.ConversationID, arg.Before)
+	var content pgtype.Text
+	err := row.Scan(&content)
+	return content, err
+}
+
+const getWebChannelBySlug = `-- name: GetWebChannelBySlug :one
+SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at FROM agent_channels
+WHERE web_slug = $1 AND channel_type = 'web' AND is_active = true AND is_deleted = false
+LIMIT 1
+`
+
+// Публичный резолв виджета по slug (web_slug глобально адресуем).
+func (q *Queries) GetWebChannelBySlug(ctx context.Context, webSlug pgtype.Text) (AgentChannel, error) {
+	row := q.db.QueryRow(ctx, getWebChannelBySlug, webSlug)
+	var i AgentChannel
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.AgentID,
+		&i.ChannelType,
+		&i.Name,
+		&i.TgBotToken,
+		&i.TgBotUsername,
+		&i.VkGroupID,
+		&i.VkAccessToken,
+		&i.VkSecretKey,
+		&i.MaxBotToken,
+		&i.AvitoUserID,
+		&i.AvitoClientID,
+		&i.AvitoClientSecret,
+		&i.AvitoAccessToken,
+		&i.AvitoTokenExpiresAt,
+		&i.WebSlug,
+		&i.WebIsPublic,
+		&i.WebRateLimitPerMin,
+		&i.WebAllowedDomains,
+		&i.WebCustomDomain,
+		&i.IsActive,
+		&i.IsDeleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getWorkflow = `-- name: GetWorkflow :one
@@ -448,6 +1128,669 @@ func (q *Queries) GetWorkflowNodes(ctx context.Context, workflowID pgtype.UUID) 
 	return items, nil
 }
 
+const insertConversationFact = `-- name: InsertConversationFact :one
+INSERT INTO agent_conversation_facts
+  (profile_id, conversation_id, intake_field_id, field_key, field_value,
+   confidence, source_message_id, source_excerpt)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+RETURNING id, profile_id, conversation_id, intake_field_id, field_key, field_value, confidence, source_message_id, source_excerpt, is_verified, superseded_by, created_at, updated_at
+`
+
+type InsertConversationFactParams struct {
+	ProfileID       pgtype.UUID    `json:"profile_id"`
+	ConversationID  pgtype.UUID    `json:"conversation_id"`
+	IntakeFieldID   pgtype.UUID    `json:"intake_field_id"`
+	FieldKey        string         `json:"field_key"`
+	FieldValue      []byte         `json:"field_value"`
+	Confidence      pgtype.Numeric `json:"confidence"`
+	SourceMessageID pgtype.UUID    `json:"source_message_id"`
+	SourceExcerpt   pgtype.Text    `json:"source_excerpt"`
+}
+
+func (q *Queries) InsertConversationFact(ctx context.Context, arg InsertConversationFactParams) (AgentConversationFact, error) {
+	row := q.db.QueryRow(ctx, insertConversationFact,
+		arg.ProfileID,
+		arg.ConversationID,
+		arg.IntakeFieldID,
+		arg.FieldKey,
+		arg.FieldValue,
+		arg.Confidence,
+		arg.SourceMessageID,
+		arg.SourceExcerpt,
+	)
+	var i AgentConversationFact
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.ConversationID,
+		&i.IntakeFieldID,
+		&i.FieldKey,
+		&i.FieldValue,
+		&i.Confidence,
+		&i.SourceMessageID,
+		&i.SourceExcerpt,
+		&i.IsVerified,
+		&i.SupersededBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertDigest = `-- name: InsertDigest :exec
+INSERT INTO agent_insight_digests
+  (profile_id, agent_id, period_start, period_end, metrics, insights)
+VALUES ($1, $2, $3, $4, $5, $6)
+`
+
+type InsertDigestParams struct {
+	ProfileID   pgtype.UUID `json:"profile_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	PeriodStart pgtype.Date `json:"period_start"`
+	PeriodEnd   pgtype.Date `json:"period_end"`
+	Metrics     []byte      `json:"metrics"`
+	Insights    []byte      `json:"insights"`
+}
+
+func (q *Queries) InsertDigest(ctx context.Context, arg InsertDigestParams) error {
+	_, err := q.db.Exec(ctx, insertDigest,
+		arg.ProfileID,
+		arg.AgentID,
+		arg.PeriodStart,
+		arg.PeriodEnd,
+		arg.Metrics,
+		arg.Insights,
+	)
+	return err
+}
+
+const insertMessage = `-- name: InsertMessage :one
+
+INSERT INTO agent_messages (
+  profile_id, conversation_id, role, content, content_original,
+  tool_calls, tool_call_id, tool_result,
+  retrieved_chunks, citations, attachments, has_image,
+  detected_language, response_language,
+  operator_account_id,
+  redaction_applied, redaction_log,
+  tokens_in, tokens_out, cost_usd, latency_ms,
+  llm_model, llm_provider
+) VALUES (
+  $1,$2,$3,$4,$5, $6,$7,$8, $9,$10,$11,$12, $13,$14, $15,
+  $16,$17, $18,$19,$20,$21, $22,$23
+)
+RETURNING id, profile_id, conversation_id, role, content, content_original, tool_calls, tool_call_id, tool_result, retrieved_chunks, citations, attachments, has_image, detected_language, response_language, operator_account_id, redaction_applied, redaction_log, tokens_in, tokens_out, cost_usd, latency_ms, llm_model, llm_provider, created_at
+`
+
+type InsertMessageParams struct {
+	ProfileID         pgtype.UUID    `json:"profile_id"`
+	ConversationID    pgtype.UUID    `json:"conversation_id"`
+	Role              string         `json:"role"`
+	Content           pgtype.Text    `json:"content"`
+	ContentOriginal   pgtype.Text    `json:"content_original"`
+	ToolCalls         []byte         `json:"tool_calls"`
+	ToolCallID        pgtype.Text    `json:"tool_call_id"`
+	ToolResult        []byte         `json:"tool_result"`
+	RetrievedChunks   []byte         `json:"retrieved_chunks"`
+	Citations         []byte         `json:"citations"`
+	Attachments       []byte         `json:"attachments"`
+	HasImage          pgtype.Bool    `json:"has_image"`
+	DetectedLanguage  pgtype.Text    `json:"detected_language"`
+	ResponseLanguage  pgtype.Text    `json:"response_language"`
+	OperatorAccountID pgtype.UUID    `json:"operator_account_id"`
+	RedactionApplied  pgtype.Bool    `json:"redaction_applied"`
+	RedactionLog      []byte         `json:"redaction_log"`
+	TokensIn          pgtype.Int4    `json:"tokens_in"`
+	TokensOut         pgtype.Int4    `json:"tokens_out"`
+	CostUsd           pgtype.Numeric `json:"cost_usd"`
+	LatencyMs         pgtype.Int4    `json:"latency_ms"`
+	LlmModel          pgtype.Text    `json:"llm_model"`
+	LlmProvider       pgtype.Text    `json:"llm_provider"`
+}
+
+// ============================================================
+// AGENT_MESSAGES
+// ============================================================
+func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (AgentMessage, error) {
+	row := q.db.QueryRow(ctx, insertMessage,
+		arg.ProfileID,
+		arg.ConversationID,
+		arg.Role,
+		arg.Content,
+		arg.ContentOriginal,
+		arg.ToolCalls,
+		arg.ToolCallID,
+		arg.ToolResult,
+		arg.RetrievedChunks,
+		arg.Citations,
+		arg.Attachments,
+		arg.HasImage,
+		arg.DetectedLanguage,
+		arg.ResponseLanguage,
+		arg.OperatorAccountID,
+		arg.RedactionApplied,
+		arg.RedactionLog,
+		arg.TokensIn,
+		arg.TokensOut,
+		arg.CostUsd,
+		arg.LatencyMs,
+		arg.LlmModel,
+		arg.LlmProvider,
+	)
+	var i AgentMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.ConversationID,
+		&i.Role,
+		&i.Content,
+		&i.ContentOriginal,
+		&i.ToolCalls,
+		&i.ToolCallID,
+		&i.ToolResult,
+		&i.RetrievedChunks,
+		&i.Citations,
+		&i.Attachments,
+		&i.HasImage,
+		&i.DetectedLanguage,
+		&i.ResponseLanguage,
+		&i.OperatorAccountID,
+		&i.RedactionApplied,
+		&i.RedactionLog,
+		&i.TokensIn,
+		&i.TokensOut,
+		&i.CostUsd,
+		&i.LatencyMs,
+		&i.LlmModel,
+		&i.LlmProvider,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertScheduledOutreach = `-- name: InsertScheduledOutreach :one
+
+INSERT INTO agent_scheduled_outreach
+  (profile_id, conversation_id, agent_id, trigger_type, scheduled_for, message_hint)
+VALUES ($1, $2, $3, 'tool_call', $4, $5)
+RETURNING id
+`
+
+type InsertScheduledOutreachParams struct {
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	AgentID        pgtype.UUID        `json:"agent_id"`
+	ScheduledFor   pgtype.Timestamptz `json:"scheduled_for"`
+	MessageHint    pgtype.Text        `json:"message_hint"`
+}
+
+// ============================================================
+// OUTREACH / CITATIONS (local tools 084)
+// ============================================================
+func (q *Queries) InsertScheduledOutreach(ctx context.Context, arg InsertScheduledOutreachParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, insertScheduledOutreach,
+		arg.ProfileID,
+		arg.ConversationID,
+		arg.AgentID,
+		arg.ScheduledFor,
+		arg.MessageHint,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lastMessages = `-- name: LastMessages :many
+SELECT id, profile_id, conversation_id, role, content, content_original, tool_calls, tool_call_id, tool_result, retrieved_chunks, citations, attachments, has_image, detected_language, response_language, operator_account_id, redaction_applied, redaction_log, tokens_in, tokens_out, cost_usd, latency_ms, llm_model, llm_provider, created_at FROM agent_messages
+WHERE conversation_id = $1
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type LastMessagesParams struct {
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	Limit          int32       `json:"limit"`
+}
+
+func (q *Queries) LastMessages(ctx context.Context, arg LastMessagesParams) ([]AgentMessage, error) {
+	rows, err := q.db.Query(ctx, lastMessages, arg.ConversationID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentMessage{}
+	for rows.Next() {
+		var i AgentMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.ConversationID,
+			&i.Role,
+			&i.Content,
+			&i.ContentOriginal,
+			&i.ToolCalls,
+			&i.ToolCallID,
+			&i.ToolResult,
+			&i.RetrievedChunks,
+			&i.Citations,
+			&i.Attachments,
+			&i.HasImage,
+			&i.DetectedLanguage,
+			&i.ResponseLanguage,
+			&i.OperatorAccountID,
+			&i.RedactionApplied,
+			&i.RedactionLog,
+			&i.TokensIn,
+			&i.TokensOut,
+			&i.CostUsd,
+			&i.LatencyMs,
+			&i.LlmModel,
+			&i.LlmProvider,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveChannelsByType = `-- name: ListActiveChannelsByType :many
+SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at FROM agent_channels
+WHERE channel_type = $1 AND is_active = true AND is_deleted = false
+`
+
+func (q *Queries) ListActiveChannelsByType(ctx context.Context, channelType string) ([]AgentChannel, error) {
+	rows, err := q.db.Query(ctx, listActiveChannelsByType, channelType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentChannel{}
+	for rows.Next() {
+		var i AgentChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.AgentID,
+			&i.ChannelType,
+			&i.Name,
+			&i.TgBotToken,
+			&i.TgBotUsername,
+			&i.VkGroupID,
+			&i.VkAccessToken,
+			&i.VkSecretKey,
+			&i.MaxBotToken,
+			&i.AvitoUserID,
+			&i.AvitoClientID,
+			&i.AvitoClientSecret,
+			&i.AvitoAccessToken,
+			&i.AvitoTokenExpiresAt,
+			&i.WebSlug,
+			&i.WebIsPublic,
+			&i.WebRateLimitPerMin,
+			&i.WebAllowedDomains,
+			&i.WebCustomDomain,
+			&i.IsActive,
+			&i.IsDeleted,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentProfileIds = `-- name: ListAgentProfileIds :many
+SELECT DISTINCT profile_id FROM agents WHERE is_deleted = false
+`
+
+// Тенанты с хотя бы одним агентом (для планирования дайджестов).
+func (q *Queries) ListAgentProfileIds(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listAgentProfileIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var profile_id pgtype.UUID
+		if err := rows.Scan(&profile_id); err != nil {
+			return nil, err
+		}
+		items = append(items, profile_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConversationFacts = `-- name: ListConversationFacts :many
+SELECT id, profile_id, conversation_id, intake_field_id, field_key, field_value, confidence, source_message_id, source_excerpt, is_verified, superseded_by, created_at, updated_at FROM agent_conversation_facts
+WHERE conversation_id = $1 AND superseded_by IS NULL
+`
+
+func (q *Queries) ListConversationFacts(ctx context.Context, conversationID pgtype.UUID) ([]AgentConversationFact, error) {
+	rows, err := q.db.Query(ctx, listConversationFacts, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentConversationFact{}
+	for rows.Next() {
+		var i AgentConversationFact
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.ConversationID,
+			&i.IntakeFieldID,
+			&i.FieldKey,
+			&i.FieldValue,
+			&i.Confidence,
+			&i.SourceMessageID,
+			&i.SourceExcerpt,
+			&i.IsVerified,
+			&i.SupersededBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueForInsights = `-- name: ListDueForInsights :many
+
+SELECT c.id, c.profile_id
+FROM agent_conversations c
+LEFT JOIN agent_conversation_insights i ON i.conversation_id = c.id
+WHERE i.id IS NULL
+  AND c.last_message_at < NOW() - INTERVAL '30 minutes'
+ORDER BY c.last_message_at ASC
+LIMIT $1
+`
+
+type ListDueForInsightsRow struct {
+	ID        pgtype.UUID `json:"id"`
+	ProfileID pgtype.UUID `json:"profile_id"`
+}
+
+// ============================================================
+// INSIGHTS (post-conversation tagging, 092/093)
+// ============================================================
+// Диалоги без активности > 30 мин и ещё без insights.
+func (q *Queries) ListDueForInsights(ctx context.Context, limit int32) ([]ListDueForInsightsRow, error) {
+	rows, err := q.db.Query(ctx, listDueForInsights, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDueForInsightsRow{}
+	for rows.Next() {
+		var i ListDueForInsightsRow
+		if err := rows.Scan(&i.ID, &i.ProfileID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnabledTools = `-- name: ListEnabledTools :many
+
+SELECT id, profile_id, agent_id, tool_name, config, is_enabled, created_at FROM agent_tools
+WHERE agent_id = $1 AND is_enabled = true
+`
+
+// ============================================================
+// AGENT_TOOLS
+// ============================================================
+func (q *Queries) ListEnabledTools(ctx context.Context, agentID pgtype.UUID) ([]AgentTool, error) {
+	rows, err := q.db.Query(ctx, listEnabledTools, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTool{}
+	for rows.Next() {
+		var i AgentTool
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.AgentID,
+			&i.ToolName,
+			&i.Config,
+			&i.IsEnabled,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInsightsForDigest = `-- name: ListInsightsForDigest :many
+SELECT tags, sentiment, primary_intent, topics, converted, short_summary
+FROM agent_conversation_insights
+WHERE profile_id = $1
+  AND generated_at >= $2
+  AND generated_at < $3
+`
+
+type ListInsightsForDigestParams struct {
+	ProfileID  pgtype.UUID        `json:"profile_id"`
+	PeriodFrom pgtype.Timestamptz `json:"period_from"`
+	PeriodTo   pgtype.Timestamptz `json:"period_to"`
+}
+
+type ListInsightsForDigestRow struct {
+	Tags          []string    `json:"tags"`
+	Sentiment     pgtype.Text `json:"sentiment"`
+	PrimaryIntent pgtype.Text `json:"primary_intent"`
+	Topics        []string    `json:"topics"`
+	Converted     pgtype.Bool `json:"converted"`
+	ShortSummary  pgtype.Text `json:"short_summary"`
+}
+
+// Insights тенанта за период (для weekly digest, 093).
+func (q *Queries) ListInsightsForDigest(ctx context.Context, arg ListInsightsForDigestParams) ([]ListInsightsForDigestRow, error) {
+	rows, err := q.db.Query(ctx, listInsightsForDigest, arg.ProfileID, arg.PeriodFrom, arg.PeriodTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInsightsForDigestRow{}
+	for rows.Next() {
+		var i ListInsightsForDigestRow
+		if err := rows.Scan(
+			&i.Tags,
+			&i.Sentiment,
+			&i.PrimaryIntent,
+			&i.Topics,
+			&i.Converted,
+			&i.ShortSummary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIntakeFields = `-- name: ListIntakeFields :many
+
+SELECT id, profile_id, agent_id, field_key, field_label, field_type, field_options, field_validation, elicitation_hint, rephrase_examples, why_we_ask, is_required, ask_priority, depends_on, is_active, is_deleted, created_at, updated_at FROM agent_intake_fields
+WHERE agent_id = $1 AND is_active = true AND is_deleted = false
+ORDER BY ask_priority
+`
+
+// ============================================================
+// AGENT_INTAKE_FIELDS + FACTS
+// ============================================================
+func (q *Queries) ListIntakeFields(ctx context.Context, agentID pgtype.UUID) ([]AgentIntakeField, error) {
+	rows, err := q.db.Query(ctx, listIntakeFields, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentIntakeField{}
+	for rows.Next() {
+		var i AgentIntakeField
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.AgentID,
+			&i.FieldKey,
+			&i.FieldLabel,
+			&i.FieldType,
+			&i.FieldOptions,
+			&i.FieldValidation,
+			&i.ElicitationHint,
+			&i.RephraseExamples,
+			&i.WhyWeAsk,
+			&i.IsRequired,
+			&i.AskPriority,
+			&i.DependsOn,
+			&i.IsActive,
+			&i.IsDeleted,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMessagesByConversation = `-- name: ListMessagesByConversation :many
+SELECT id, profile_id, conversation_id, role, content, content_original, tool_calls, tool_call_id, tool_result, retrieved_chunks, citations, attachments, has_image, detected_language, response_language, operator_account_id, redaction_applied, redaction_log, tokens_in, tokens_out, cost_usd, latency_ms, llm_model, llm_provider, created_at FROM agent_messages
+WHERE conversation_id = $1
+ORDER BY created_at ASC
+LIMIT $2 OFFSET $3
+`
+
+type ListMessagesByConversationParams struct {
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	Limit          int32       `json:"limit"`
+	Offset         int32       `json:"offset"`
+}
+
+func (q *Queries) ListMessagesByConversation(ctx context.Context, arg ListMessagesByConversationParams) ([]AgentMessage, error) {
+	rows, err := q.db.Query(ctx, listMessagesByConversation, arg.ConversationID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentMessage{}
+	for rows.Next() {
+		var i AgentMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.ConversationID,
+			&i.Role,
+			&i.Content,
+			&i.ContentOriginal,
+			&i.ToolCalls,
+			&i.ToolCallID,
+			&i.ToolResult,
+			&i.RetrievedChunks,
+			&i.Citations,
+			&i.Attachments,
+			&i.HasImage,
+			&i.DetectedLanguage,
+			&i.ResponseLanguage,
+			&i.OperatorAccountID,
+			&i.RedactionApplied,
+			&i.RedactionLog,
+			&i.TokensIn,
+			&i.TokensOut,
+			&i.CostUsd,
+			&i.LatencyMs,
+			&i.LlmModel,
+			&i.LlmProvider,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPromotedFeedback = `-- name: ListPromotedFeedback :many
+
+SELECT message_id, correction
+FROM agent_feedback
+WHERE agent_id = $1 AND promoted_to_few_shot = true
+ORDER BY promoted_at DESC NULLS LAST
+LIMIT $2
+`
+
+type ListPromotedFeedbackParams struct {
+	AgentID pgtype.UUID `json:"agent_id"`
+	Limit   int32       `json:"limit"`
+}
+
+type ListPromotedFeedbackRow struct {
+	MessageID  pgtype.UUID `json:"message_id"`
+	Correction pgtype.Text `json:"correction"`
+}
+
+// ============================================================
+// FEW-SHOT (101 — promoted feedback в system prompt)
+// ============================================================
+func (q *Queries) ListPromotedFeedback(ctx context.Context, arg ListPromotedFeedbackParams) ([]ListPromotedFeedbackRow, error) {
+	rows, err := q.db.Query(ctx, listPromotedFeedback, arg.AgentID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromotedFeedbackRow{}
+	for rows.Next() {
+		var i ListPromotedFeedbackRow
+		if err := rows.Scan(&i.MessageID, &i.Correction); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const logMessage = `-- name: LogMessage :exec
 INSERT INTO telegram_messages_log (
     id, profile_id, telegram_user_id, chat_id, message_text,
@@ -475,6 +1818,22 @@ func (q *Queries) LogMessage(ctx context.Context, arg LogMessageParams) error {
 		arg.IsFromBot,
 		arg.Metadata,
 	)
+	return err
+}
+
+const markEscalated = `-- name: MarkEscalated :exec
+UPDATE agent_conversations
+SET is_escalated = true, escalated_at = NOW(), escalation_reason = $2
+WHERE id = $1
+`
+
+type MarkEscalatedParams struct {
+	ID               pgtype.UUID `json:"id"`
+	EscalationReason pgtype.Text `json:"escalation_reason"`
+}
+
+func (q *Queries) MarkEscalated(ctx context.Context, arg MarkEscalatedParams) error {
+	_, err := q.db.Exec(ctx, markEscalated, arg.ID, arg.EscalationReason)
 	return err
 }
 
@@ -536,6 +1895,22 @@ func (q *Queries) SearchKnowledge(ctx context.Context, arg SearchKnowledgeParams
 	return items, nil
 }
 
+const supersedeFact = `-- name: SupersedeFact :exec
+UPDATE agent_conversation_facts
+SET superseded_by = $2
+WHERE id = $1
+`
+
+type SupersedeFactParams struct {
+	ID           pgtype.UUID `json:"id"`
+	SupersededBy pgtype.UUID `json:"superseded_by"`
+}
+
+func (q *Queries) SupersedeFact(ctx context.Context, arg SupersedeFactParams) error {
+	_, err := q.db.Exec(ctx, supersedeFact, arg.ID, arg.SupersededBy)
+	return err
+}
+
 const updateConversation = `-- name: UpdateConversation :exec
 UPDATE telegram_conversations
 SET context = $2, last_message_at = NOW()
@@ -549,6 +1924,38 @@ type UpdateConversationParams struct {
 
 func (q *Queries) UpdateConversation(ctx context.Context, arg UpdateConversationParams) error {
 	_, err := q.db.Exec(ctx, updateConversation, arg.ID, arg.Context)
+	return err
+}
+
+const updateConversationContext = `-- name: UpdateConversationContext :exec
+UPDATE agent_conversations
+SET context = context || $2::jsonb, last_message_at = NOW()
+WHERE id = $1
+`
+
+type UpdateConversationContextParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Column2 []byte      `json:"column_2"`
+}
+
+func (q *Queries) UpdateConversationContext(ctx context.Context, arg UpdateConversationContextParams) error {
+	_, err := q.db.Exec(ctx, updateConversationContext, arg.ID, arg.Column2)
+	return err
+}
+
+const updateConversationSummary = `-- name: UpdateConversationSummary :exec
+UPDATE agent_conversations
+SET summary = $2, last_message_at = NOW()
+WHERE id = $1
+`
+
+type UpdateConversationSummaryParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Summary pgtype.Text `json:"summary"`
+}
+
+func (q *Queries) UpdateConversationSummary(ctx context.Context, arg UpdateConversationSummaryParams) error {
+	_, err := q.db.Exec(ctx, updateConversationSummary, arg.ID, arg.Summary)
 	return err
 }
 
@@ -575,5 +1982,110 @@ func (q *Queries) UpdateExecution(ctx context.Context, arg UpdateExecutionParams
 		arg.OutputData,
 		arg.ErrorMessage,
 	)
+	return err
+}
+
+const updateSourceStatus = `-- name: UpdateSourceStatus :exec
+UPDATE agent_knowledge_sources
+SET status = $2, error_message = $3, indexed_at = COALESCE($4, indexed_at),
+    chunks_count = COALESCE($5, chunks_count),
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type UpdateSourceStatusParams struct {
+	ID           pgtype.UUID        `json:"id"`
+	Status       string             `json:"status"`
+	ErrorMessage pgtype.Text        `json:"error_message"`
+	IndexedAt    pgtype.Timestamptz `json:"indexed_at"`
+	ChunksCount  pgtype.Int4        `json:"chunks_count"`
+}
+
+func (q *Queries) UpdateSourceStatus(ctx context.Context, arg UpdateSourceStatusParams) error {
+	_, err := q.db.Exec(ctx, updateSourceStatus,
+		arg.ID,
+		arg.Status,
+		arg.ErrorMessage,
+		arg.IndexedAt,
+		arg.ChunksCount,
+	)
+	return err
+}
+
+const upsertInsights = `-- name: UpsertInsights :exec
+INSERT INTO agent_conversation_insights
+  (profile_id, conversation_id, tags, sentiment, sentiment_confidence,
+   primary_intent, secondary_intents, topics, short_summary, long_summary,
+   contact_extracted, next_step_suggestion, converted, conversion_tool, llm_model)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+ON CONFLICT (conversation_id) DO UPDATE SET
+  tags = EXCLUDED.tags,
+  sentiment = EXCLUDED.sentiment,
+  sentiment_confidence = EXCLUDED.sentiment_confidence,
+  primary_intent = EXCLUDED.primary_intent,
+  secondary_intents = EXCLUDED.secondary_intents,
+  topics = EXCLUDED.topics,
+  short_summary = EXCLUDED.short_summary,
+  long_summary = EXCLUDED.long_summary,
+  contact_extracted = EXCLUDED.contact_extracted,
+  next_step_suggestion = EXCLUDED.next_step_suggestion,
+  converted = EXCLUDED.converted,
+  conversion_tool = EXCLUDED.conversion_tool,
+  llm_model = EXCLUDED.llm_model,
+  generated_at = NOW()
+`
+
+type UpsertInsightsParams struct {
+	ProfileID           pgtype.UUID    `json:"profile_id"`
+	ConversationID      pgtype.UUID    `json:"conversation_id"`
+	Tags                []string       `json:"tags"`
+	Sentiment           pgtype.Text    `json:"sentiment"`
+	SentimentConfidence pgtype.Numeric `json:"sentiment_confidence"`
+	PrimaryIntent       pgtype.Text    `json:"primary_intent"`
+	SecondaryIntents    []string       `json:"secondary_intents"`
+	Topics              []string       `json:"topics"`
+	ShortSummary        pgtype.Text    `json:"short_summary"`
+	LongSummary         pgtype.Text    `json:"long_summary"`
+	ContactExtracted    []byte         `json:"contact_extracted"`
+	NextStepSuggestion  pgtype.Text    `json:"next_step_suggestion"`
+	Converted           pgtype.Bool    `json:"converted"`
+	ConversionTool      pgtype.Text    `json:"conversion_tool"`
+	LlmModel            pgtype.Text    `json:"llm_model"`
+}
+
+func (q *Queries) UpsertInsights(ctx context.Context, arg UpsertInsightsParams) error {
+	_, err := q.db.Exec(ctx, upsertInsights,
+		arg.ProfileID,
+		arg.ConversationID,
+		arg.Tags,
+		arg.Sentiment,
+		arg.SentimentConfidence,
+		arg.PrimaryIntent,
+		arg.SecondaryIntents,
+		arg.Topics,
+		arg.ShortSummary,
+		arg.LongSummary,
+		arg.ContactExtracted,
+		arg.NextStepSuggestion,
+		arg.Converted,
+		arg.ConversionTool,
+		arg.LlmModel,
+	)
+	return err
+}
+
+const verifyFact = `-- name: VerifyFact :exec
+UPDATE agent_conversation_facts
+SET is_verified = true, updated_at = NOW()
+WHERE conversation_id = $1 AND field_key = $2 AND superseded_by IS NULL
+`
+
+type VerifyFactParams struct {
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	FieldKey       string      `json:"field_key"`
+}
+
+func (q *Queries) VerifyFact(ctx context.Context, arg VerifyFactParams) error {
+	_, err := q.db.Exec(ctx, verifyFact, arg.ConversationID, arg.FieldKey)
 	return err
 }
