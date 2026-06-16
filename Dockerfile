@@ -19,10 +19,8 @@ RUN go mod download
 # Копируем весь код
 COPY . .
 
-# Собираем оба entrypoint'а в один образ (сервис НЕ переименовываем):
-#   cmd/bot   → telegram-бот (legacy, дефолтный CMD)
-#   cmd/agent → AI-agent runtime (запускается через command override в k8s)
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sambacrm-business-tg ./cmd/bot
+# Собираем agent-runtime (единственный entrypoint):
+#   cmd/agent → AI-agent runtime
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sambacrm-business-agent ./cmd/agent
 
 # Финальный образ
@@ -33,8 +31,7 @@ RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /root/
 
-# Копируем оба бинарника (bot + agent)
-COPY --from=builder /app/sambacrm-business-tg .
+# Копируем agent-бинарник
 COPY --from=builder /app/sambacrm-business-agent .
 
 # Переменные окружения (можно переопределить при запуске)
@@ -45,4 +42,4 @@ ENV REDIS_USER=${REDIS_USER}
 ENV REDIS_PASSWORD=${REDIS_PASSWORD}
 
 # Запуск
-CMD ["./sambacrm-business-tg"]
+CMD ["./sambacrm-business-agent"]

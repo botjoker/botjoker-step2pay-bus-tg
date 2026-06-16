@@ -117,6 +117,7 @@ func main() {
 	ingest := makeIngestTrigger(envOr("RAG_URL", "http://sambacrm-agent-rag:8000"), jwtFactory)
 
 	engine := agentstore.NewEngine(queries, sink, providerFactory, ingest, opProxy, deps...)
+	engine.SetSecretsKey(agentSecretsKey) // ключ для расшифровки токенов каналов (F01)
 
 	// Telegram-транспорт: запускаем ботов активных каналов + регистрируем в op-proxy.
 	tgManager := telegram.NewManager(engine)
@@ -124,6 +125,13 @@ func main() {
 		for _, c := range chans {
 			if err := tgManager.Start(c.ChannelID, c.Token); err != nil {
 				slog.Warn("telegram channel start failed", "channel", c.ChannelID, "err", err)
+				continue
+			}
+			// Регистрируем webhook в Telegram, если задан публичный URL (F02).
+			if pub := envOr("AGENT_PUBLIC_URL", ""); pub != "" {
+				if err := tgManager.SetWebhook(c.ChannelID, pub, internalSecret); err != nil {
+					slog.Warn("telegram setWebhook failed", "channel", c.ChannelID, "err", err)
+				}
 			}
 		}
 		slog.Info("telegram channels started", "count", tgManager.Count())

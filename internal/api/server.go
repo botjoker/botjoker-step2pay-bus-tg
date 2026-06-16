@@ -15,6 +15,7 @@ import (
 
 	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/botjoker/sambacrm-business-tg/internal/storage"
+	"github.com/botjoker/sambacrm-business-tg/internal/transports/telegram"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -133,6 +134,15 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad channel id")
 		return
+	}
+	// Telegram: сверяем per-channel secret_token (изоляция тенантов, F02).
+	if transport == "telegram" {
+		got := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
+		want := telegram.WebhookSecret(s.internalSecret, cid)
+		if got != want {
+			writeError(w, http.StatusForbidden, "invalid secret token")
+			return
+		}
 	}
 	fn := s.webhooks[transport]
 	if fn == nil {

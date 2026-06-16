@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/pgvector/pgvector-go"
 )
 
 const appendMessageCitation = `-- name: AppendMessageCitation :exec
@@ -86,88 +85,6 @@ func (q *Queries) CreateAgentConversation(ctx context.Context, arg CreateAgentCo
 	return i, err
 }
 
-const createConversation = `-- name: CreateConversation :one
-INSERT INTO telegram_conversations (
-    id, profile_id, telegram_user_id, chat_id, context, last_message_at
-) VALUES (
-    gen_random_uuid(), $1, $2, $3, $4, NOW()
-)
-RETURNING id, profile_id, telegram_user_id, chat_id, context, last_message_at
-`
-
-type CreateConversationParams struct {
-	ProfileID      pgtype.UUID `json:"profile_id"`
-	TelegramUserID int64       `json:"telegram_user_id"`
-	ChatID         int64       `json:"chat_id"`
-	Context        []byte      `json:"context"`
-}
-
-func (q *Queries) CreateConversation(ctx context.Context, arg CreateConversationParams) (TelegramConversation, error) {
-	row := q.db.QueryRow(ctx, createConversation,
-		arg.ProfileID,
-		arg.TelegramUserID,
-		arg.ChatID,
-		arg.Context,
-	)
-	var i TelegramConversation
-	err := row.Scan(
-		&i.ID,
-		&i.ProfileID,
-		&i.TelegramUserID,
-		&i.ChatID,
-		&i.Context,
-		&i.LastMessageAt,
-	)
-	return i, err
-}
-
-const createExecution = `-- name: CreateExecution :one
-INSERT INTO telegram_executions (
-    id, profile_id, workflow_id, telegram_user_id, chat_id,
-    status, input_data, started_at
-) VALUES (
-    gen_random_uuid(), $1, $2, $3, $4, $5, $6, NOW()
-)
-RETURNING id, profile_id, workflow_id, telegram_user_id, chat_id,
-          status, input_data, output_data, error_message,
-          started_at, finished_at
-`
-
-type CreateExecutionParams struct {
-	ProfileID      pgtype.UUID `json:"profile_id"`
-	WorkflowID     pgtype.UUID `json:"workflow_id"`
-	TelegramUserID int64       `json:"telegram_user_id"`
-	ChatID         int64       `json:"chat_id"`
-	Status         string      `json:"status"`
-	InputData      []byte      `json:"input_data"`
-}
-
-func (q *Queries) CreateExecution(ctx context.Context, arg CreateExecutionParams) (TelegramExecution, error) {
-	row := q.db.QueryRow(ctx, createExecution,
-		arg.ProfileID,
-		arg.WorkflowID,
-		arg.TelegramUserID,
-		arg.ChatID,
-		arg.Status,
-		arg.InputData,
-	)
-	var i TelegramExecution
-	err := row.Scan(
-		&i.ID,
-		&i.ProfileID,
-		&i.WorkflowID,
-		&i.TelegramUserID,
-		&i.ChatID,
-		&i.Status,
-		&i.InputData,
-		&i.OutputData,
-		&i.ErrorMessage,
-		&i.StartedAt,
-		&i.FinishedAt,
-	)
-	return i, err
-}
-
 const deactivateActiveFact = `-- name: DeactivateActiveFact :exec
 UPDATE agent_conversation_facts
 SET superseded_by = id
@@ -223,118 +140,6 @@ func (q *Queries) GetActiveTakeover(ctx context.Context, conversationID pgtype.U
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const getActiveWorkflowsByBot = `-- name: GetActiveWorkflowsByBot :many
-SELECT id, profile_id, bot_id, workflow_name, workflow_key, description,
-       trigger_type, trigger_config, is_active,
-       created_at, updated_at, created_by
-FROM telegram_workflows
-WHERE bot_id = $1 AND is_active = true
-`
-
-type GetActiveWorkflowsByBotRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	ProfileID     pgtype.UUID        `json:"profile_id"`
-	BotID         pgtype.UUID        `json:"bot_id"`
-	WorkflowName  string             `json:"workflow_name"`
-	WorkflowKey   string             `json:"workflow_key"`
-	Description   pgtype.Text        `json:"description"`
-	TriggerType   string             `json:"trigger_type"`
-	TriggerConfig []byte             `json:"trigger_config"`
-	IsActive      bool               `json:"is_active"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	CreatedBy     pgtype.UUID        `json:"created_by"`
-}
-
-func (q *Queries) GetActiveWorkflowsByBot(ctx context.Context, botID pgtype.UUID) ([]GetActiveWorkflowsByBotRow, error) {
-	rows, err := q.db.Query(ctx, getActiveWorkflowsByBot, botID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetActiveWorkflowsByBotRow{}
-	for rows.Next() {
-		var i GetActiveWorkflowsByBotRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProfileID,
-			&i.BotID,
-			&i.WorkflowName,
-			&i.WorkflowKey,
-			&i.Description,
-			&i.TriggerType,
-			&i.TriggerConfig,
-			&i.IsActive,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.CreatedBy,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getActiveWorkflowsByProfile = `-- name: GetActiveWorkflowsByProfile :many
-SELECT id, profile_id, bot_id, workflow_name, workflow_key, description,
-       trigger_type, trigger_config, is_active,
-       created_at, updated_at, created_by
-FROM telegram_workflows
-WHERE profile_id = $1 AND is_active = true
-`
-
-type GetActiveWorkflowsByProfileRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	ProfileID     pgtype.UUID        `json:"profile_id"`
-	BotID         pgtype.UUID        `json:"bot_id"`
-	WorkflowName  string             `json:"workflow_name"`
-	WorkflowKey   string             `json:"workflow_key"`
-	Description   pgtype.Text        `json:"description"`
-	TriggerType   string             `json:"trigger_type"`
-	TriggerConfig []byte             `json:"trigger_config"`
-	IsActive      bool               `json:"is_active"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	CreatedBy     pgtype.UUID        `json:"created_by"`
-}
-
-func (q *Queries) GetActiveWorkflowsByProfile(ctx context.Context, profileID pgtype.UUID) ([]GetActiveWorkflowsByProfileRow, error) {
-	rows, err := q.db.Query(ctx, getActiveWorkflowsByProfile, profileID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetActiveWorkflowsByProfileRow{}
-	for rows.Next() {
-		var i GetActiveWorkflowsByProfileRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProfileID,
-			&i.BotID,
-			&i.WorkflowName,
-			&i.WorkflowKey,
-			&i.Description,
-			&i.TriggerType,
-			&i.TriggerConfig,
-			&i.IsActive,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.CreatedBy,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getAgent = `-- name: GetAgent :one
@@ -644,52 +449,6 @@ func (q *Queries) GetAgentConversationByExternal(ctx context.Context, arg GetAge
 	return i, err
 }
 
-const getAllActiveBots = `-- name: GetAllActiveBots :many
-SELECT 
-    id, profile_id, bot_token, bot_username, bot_name, is_active,
-    welcome_message, ai_enabled, ai_provider, ai_model, 
-    ai_system_prompt, ai_temperature, ai_max_tokens,
-    created_at, updated_at
-FROM telegram_bots
-WHERE is_active = true
-`
-
-func (q *Queries) GetAllActiveBots(ctx context.Context) ([]TelegramBot, error) {
-	rows, err := q.db.Query(ctx, getAllActiveBots)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []TelegramBot{}
-	for rows.Next() {
-		var i TelegramBot
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProfileID,
-			&i.BotToken,
-			&i.BotUsername,
-			&i.BotName,
-			&i.IsActive,
-			&i.WelcomeMessage,
-			&i.AiEnabled,
-			&i.AiProvider,
-			&i.AiModel,
-			&i.AiSystemPrompt,
-			&i.AiTemperature,
-			&i.AiMaxTokens,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getChannel = `-- name: GetChannel :one
 
 SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at FROM agent_channels
@@ -775,36 +534,10 @@ func (q *Queries) GetChannelByWebSlug(ctx context.Context, arg GetChannelByWebSl
 	return i, err
 }
 
-const getConversation = `-- name: GetConversation :one
-SELECT id, profile_id, telegram_user_id, chat_id, context, last_message_at
-FROM telegram_conversations
-WHERE profile_id = $1 AND chat_id = $2
-LIMIT 1
-`
-
-type GetConversationParams struct {
-	ProfileID pgtype.UUID `json:"profile_id"`
-	ChatID    int64       `json:"chat_id"`
-}
-
-func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (TelegramConversation, error) {
-	row := q.db.QueryRow(ctx, getConversation, arg.ProfileID, arg.ChatID)
-	var i TelegramConversation
-	err := row.Scan(
-		&i.ID,
-		&i.ProfileID,
-		&i.TelegramUserID,
-		&i.ChatID,
-		&i.Context,
-		&i.LastMessageAt,
-	)
-	return i, err
-}
-
 const getCredential = `-- name: GetCredential :one
 
 SELECT id, profile_id, credential_type, key1, key2, key3, metadata, is_active
-FROM credentials WHERE id = $1
+FROM agent_credentials WHERE id = $1
 `
 
 type GetCredentialRow struct {
@@ -875,45 +608,6 @@ func (q *Queries) GetCurrentUsage(ctx context.Context, profileID pgtype.UUID) (A
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const getKnowledgeBase = `-- name: GetKnowledgeBase :many
-SELECT id, profile_id, source_type, source_id, title, content,
-       metadata, embedding, is_active, created_at, updated_at
-FROM telegram_knowledge_base
-WHERE profile_id = $1 AND is_active = true
-`
-
-func (q *Queries) GetKnowledgeBase(ctx context.Context, profileID pgtype.UUID) ([]TelegramKnowledgeBase, error) {
-	rows, err := q.db.Query(ctx, getKnowledgeBase, profileID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []TelegramKnowledgeBase{}
-	for rows.Next() {
-		var i TelegramKnowledgeBase
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProfileID,
-			&i.SourceType,
-			&i.SourceID,
-			&i.Title,
-			&i.Content,
-			&i.Metadata,
-			&i.Embedding,
-			&i.IsActive,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getKnowledgeSource = `-- name: GetKnowledgeSource :one
@@ -1028,137 +722,6 @@ func (q *Queries) GetWebChannelBySlug(ctx context.Context, webSlug pgtype.Text) 
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const getWorkflow = `-- name: GetWorkflow :one
-SELECT id, profile_id, bot_id, workflow_name, workflow_key, description,
-       trigger_type, trigger_config, is_active,
-       created_at, updated_at, created_by
-FROM telegram_workflows
-WHERE id = $1
-`
-
-type GetWorkflowRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	ProfileID     pgtype.UUID        `json:"profile_id"`
-	BotID         pgtype.UUID        `json:"bot_id"`
-	WorkflowName  string             `json:"workflow_name"`
-	WorkflowKey   string             `json:"workflow_key"`
-	Description   pgtype.Text        `json:"description"`
-	TriggerType   string             `json:"trigger_type"`
-	TriggerConfig []byte             `json:"trigger_config"`
-	IsActive      bool               `json:"is_active"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	CreatedBy     pgtype.UUID        `json:"created_by"`
-}
-
-func (q *Queries) GetWorkflow(ctx context.Context, id pgtype.UUID) (GetWorkflowRow, error) {
-	row := q.db.QueryRow(ctx, getWorkflow, id)
-	var i GetWorkflowRow
-	err := row.Scan(
-		&i.ID,
-		&i.ProfileID,
-		&i.BotID,
-		&i.WorkflowName,
-		&i.WorkflowKey,
-		&i.Description,
-		&i.TriggerType,
-		&i.TriggerConfig,
-		&i.IsActive,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CreatedBy,
-	)
-	return i, err
-}
-
-const getWorkflowEdges = `-- name: GetWorkflowEdges :many
-SELECT id, workflow_id, source_node_id, target_node_id,
-       condition_field, condition_operator, condition_value, created_at
-FROM telegram_workflow_edges
-WHERE workflow_id = $1
-`
-
-func (q *Queries) GetWorkflowEdges(ctx context.Context, workflowID pgtype.UUID) ([]TelegramWorkflowEdge, error) {
-	rows, err := q.db.Query(ctx, getWorkflowEdges, workflowID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []TelegramWorkflowEdge{}
-	for rows.Next() {
-		var i TelegramWorkflowEdge
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkflowID,
-			&i.SourceNodeID,
-			&i.TargetNodeID,
-			&i.ConditionField,
-			&i.ConditionOperator,
-			&i.ConditionValue,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getWorkflowNodes = `-- name: GetWorkflowNodes :many
-SELECT id, workflow_id, node_key, node_type, node_label,
-       position_x, position_y, config, credentials_id, created_at
-FROM telegram_workflow_nodes
-WHERE workflow_id = $1
-ORDER BY position_y, position_x
-`
-
-type GetWorkflowNodesRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	WorkflowID    pgtype.UUID        `json:"workflow_id"`
-	NodeKey       string             `json:"node_key"`
-	NodeType      string             `json:"node_type"`
-	NodeLabel     pgtype.Text        `json:"node_label"`
-	PositionX     pgtype.Int4        `json:"position_x"`
-	PositionY     pgtype.Int4        `json:"position_y"`
-	Config        []byte             `json:"config"`
-	CredentialsID pgtype.UUID        `json:"credentials_id"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-}
-
-func (q *Queries) GetWorkflowNodes(ctx context.Context, workflowID pgtype.UUID) ([]GetWorkflowNodesRow, error) {
-	rows, err := q.db.Query(ctx, getWorkflowNodes, workflowID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetWorkflowNodesRow{}
-	for rows.Next() {
-		var i GetWorkflowNodesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkflowID,
-			&i.NodeKey,
-			&i.NodeType,
-			&i.NodeLabel,
-			&i.PositionX,
-			&i.PositionY,
-			&i.Config,
-			&i.CredentialsID,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const insertConversationFact = `-- name: InsertConversationFact :one
@@ -1824,36 +1387,6 @@ func (q *Queries) ListPromotedFeedback(ctx context.Context, arg ListPromotedFeed
 	return items, nil
 }
 
-const logMessage = `-- name: LogMessage :exec
-INSERT INTO telegram_messages_log (
-    id, profile_id, telegram_user_id, chat_id, message_text,
-    is_from_bot, metadata, created_at
-) VALUES (
-    gen_random_uuid(), $1, $2, $3, $4, $5, $6, NOW()
-)
-`
-
-type LogMessageParams struct {
-	ProfileID      pgtype.UUID `json:"profile_id"`
-	TelegramUserID int64       `json:"telegram_user_id"`
-	ChatID         int64       `json:"chat_id"`
-	MessageText    pgtype.Text `json:"message_text"`
-	IsFromBot      bool        `json:"is_from_bot"`
-	Metadata       []byte      `json:"metadata"`
-}
-
-func (q *Queries) LogMessage(ctx context.Context, arg LogMessageParams) error {
-	_, err := q.db.Exec(ctx, logMessage,
-		arg.ProfileID,
-		arg.TelegramUserID,
-		arg.ChatID,
-		arg.MessageText,
-		arg.IsFromBot,
-		arg.Metadata,
-	)
-	return err
-}
-
 const markEscalated = `-- name: MarkEscalated :exec
 UPDATE agent_conversations
 SET is_escalated = true, escalated_at = NOW(), escalation_reason = $2
@@ -1870,64 +1403,6 @@ func (q *Queries) MarkEscalated(ctx context.Context, arg MarkEscalatedParams) er
 	return err
 }
 
-const searchKnowledge = `-- name: SearchKnowledge :many
-SELECT id, profile_id, source_type, source_id, title, content,
-       metadata, is_active,
-       1 - (embedding <=> $2::vector) as similarity
-FROM telegram_knowledge_base
-WHERE profile_id = $1 AND is_active = true
-ORDER BY embedding <=> $2::vector
-LIMIT $3
-`
-
-type SearchKnowledgeParams struct {
-	ProfileID pgtype.UUID     `json:"profile_id"`
-	Column2   pgvector.Vector `json:"column_2"`
-	Limit     int32           `json:"limit"`
-}
-
-type SearchKnowledgeRow struct {
-	ID         pgtype.UUID `json:"id"`
-	ProfileID  pgtype.UUID `json:"profile_id"`
-	SourceType string      `json:"source_type"`
-	SourceID   pgtype.UUID `json:"source_id"`
-	Title      pgtype.Text `json:"title"`
-	Content    string      `json:"content"`
-	Metadata   []byte      `json:"metadata"`
-	IsActive   bool        `json:"is_active"`
-	Similarity int32       `json:"similarity"`
-}
-
-func (q *Queries) SearchKnowledge(ctx context.Context, arg SearchKnowledgeParams) ([]SearchKnowledgeRow, error) {
-	rows, err := q.db.Query(ctx, searchKnowledge, arg.ProfileID, arg.Column2, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []SearchKnowledgeRow{}
-	for rows.Next() {
-		var i SearchKnowledgeRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProfileID,
-			&i.SourceType,
-			&i.SourceID,
-			&i.Title,
-			&i.Content,
-			&i.Metadata,
-			&i.IsActive,
-			&i.Similarity,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const supersedeFact = `-- name: SupersedeFact :exec
 UPDATE agent_conversation_facts
 SET superseded_by = $2
@@ -1941,22 +1416,6 @@ type SupersedeFactParams struct {
 
 func (q *Queries) SupersedeFact(ctx context.Context, arg SupersedeFactParams) error {
 	_, err := q.db.Exec(ctx, supersedeFact, arg.ID, arg.SupersededBy)
-	return err
-}
-
-const updateConversation = `-- name: UpdateConversation :exec
-UPDATE telegram_conversations
-SET context = $2, last_message_at = NOW()
-WHERE id = $1
-`
-
-type UpdateConversationParams struct {
-	ID      pgtype.UUID `json:"id"`
-	Context []byte      `json:"context"`
-}
-
-func (q *Queries) UpdateConversation(ctx context.Context, arg UpdateConversationParams) error {
-	_, err := q.db.Exec(ctx, updateConversation, arg.ID, arg.Context)
 	return err
 }
 
@@ -1989,32 +1448,6 @@ type UpdateConversationSummaryParams struct {
 
 func (q *Queries) UpdateConversationSummary(ctx context.Context, arg UpdateConversationSummaryParams) error {
 	_, err := q.db.Exec(ctx, updateConversationSummary, arg.ID, arg.Summary)
-	return err
-}
-
-const updateExecution = `-- name: UpdateExecution :exec
-UPDATE telegram_executions
-SET status = $2,
-    output_data = $3,
-    error_message = $4,
-    finished_at = CASE WHEN $2 IN ('completed', 'failed') THEN NOW() ELSE finished_at END
-WHERE id = $1
-`
-
-type UpdateExecutionParams struct {
-	ID           pgtype.UUID `json:"id"`
-	Status       string      `json:"status"`
-	OutputData   []byte      `json:"output_data"`
-	ErrorMessage pgtype.Text `json:"error_message"`
-}
-
-func (q *Queries) UpdateExecution(ctx context.Context, arg UpdateExecutionParams) error {
-	_, err := q.db.Exec(ctx, updateExecution,
-		arg.ID,
-		arg.Status,
-		arg.OutputData,
-		arg.ErrorMessage,
-	)
 	return err
 }
 

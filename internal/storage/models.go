@@ -190,6 +190,21 @@ type AgentConversationInsight struct {
 	LlmModel            pgtype.Text        `json:"llm_model"`
 }
 
+type AgentCredential struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	Name           string             `json:"name"`
+	CredentialType string             `json:"credential_type"`
+	Description    pgtype.Text        `json:"description"`
+	Key1           pgtype.Text        `json:"key1"`
+	Key2           pgtype.Text        `json:"key2"`
+	Key3           pgtype.Text        `json:"key3"`
+	Metadata       []byte             `json:"metadata"`
+	IsActive       bool               `json:"is_active"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentEvalCase struct {
 	ID                  pgtype.UUID        `json:"id"`
 	ProfileID           pgtype.UUID        `json:"profile_id"`
@@ -651,21 +666,6 @@ type CoreRolePermission struct {
 	RoleID       pgtype.UUID        `json:"role_id"`
 	PermissionID pgtype.UUID        `json:"permission_id"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-}
-
-type Credential struct {
-	ID             pgtype.UUID        `json:"id"`
-	ProfileID      pgtype.UUID        `json:"profile_id"`
-	Name           string             `json:"name"`
-	CredentialType string             `json:"credential_type"`
-	Description    pgtype.Text        `json:"description"`
-	Key1           pgtype.Text        `json:"key1"`
-	Key2           pgtype.Text        `json:"key2"`
-	Key3           pgtype.Text        `json:"key3"`
-	Metadata       []byte             `json:"metadata"`
-	IsActive       bool               `json:"is_active"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type CustomField struct {
@@ -2346,134 +2346,6 @@ type TeamMember struct {
 	IsActive     pgtype.Bool        `json:"is_active"`
 	CustomFields []byte             `json:"custom_fields"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-}
-
-type TelegramBot struct {
-	ID             pgtype.UUID        `json:"id"`
-	ProfileID      pgtype.UUID        `json:"profile_id"`
-	BotToken       string             `json:"bot_token"`
-	BotUsername    pgtype.Text        `json:"bot_username"`
-	BotName        pgtype.Text        `json:"bot_name"`
-	IsActive       bool               `json:"is_active"`
-	WelcomeMessage pgtype.Text        `json:"welcome_message"`
-	AiEnabled      bool               `json:"ai_enabled"`
-	AiProvider     pgtype.Text        `json:"ai_provider"`
-	AiModel        pgtype.Text        `json:"ai_model"`
-	AiSystemPrompt pgtype.Text        `json:"ai_system_prompt"`
-	AiTemperature  pgtype.Numeric     `json:"ai_temperature"`
-	AiMaxTokens    pgtype.Int4        `json:"ai_max_tokens"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-}
-
-type TelegramConversation struct {
-	ID             pgtype.UUID        `json:"id"`
-	ProfileID      pgtype.UUID        `json:"profile_id"`
-	TelegramUserID int64              `json:"telegram_user_id"`
-	ChatID         int64              `json:"chat_id"`
-	Context        []byte             `json:"context"`
-	LastMessageAt  pgtype.Timestamptz `json:"last_message_at"`
-}
-
-type TelegramCustomerLink struct {
-	ID               pgtype.UUID        `json:"id"`
-	ProfileID        pgtype.UUID        `json:"profile_id"`
-	CustomerID       pgtype.UUID        `json:"customer_id"`
-	TelegramUserID   int64              `json:"telegram_user_id"`
-	TelegramUsername pgtype.Text        `json:"telegram_username"`
-	FirstName        pgtype.Text        `json:"first_name"`
-	LastName         pgtype.Text        `json:"last_name"`
-	LinkedAt         pgtype.Timestamptz `json:"linked_at"`
-}
-
-type TelegramExecution struct {
-	ID             pgtype.UUID        `json:"id"`
-	ProfileID      pgtype.UUID        `json:"profile_id"`
-	WorkflowID     pgtype.UUID        `json:"workflow_id"`
-	TelegramUserID int64              `json:"telegram_user_id"`
-	ChatID         int64              `json:"chat_id"`
-	Status         string             `json:"status"`
-	InputData      []byte             `json:"input_data"`
-	OutputData     []byte             `json:"output_data"`
-	ErrorMessage   pgtype.Text        `json:"error_message"`
-	StartedAt      pgtype.Timestamptz `json:"started_at"`
-	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
-}
-
-type TelegramKnowledgeBase struct {
-	ID         pgtype.UUID        `json:"id"`
-	ProfileID  pgtype.UUID        `json:"profile_id"`
-	SourceType string             `json:"source_type"`
-	SourceID   pgtype.UUID        `json:"source_id"`
-	Title      pgtype.Text        `json:"title"`
-	Content    string             `json:"content"`
-	Metadata   []byte             `json:"metadata"`
-	Embedding  pgvector.Vector    `json:"embedding"`
-	IsActive   bool               `json:"is_active"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
-}
-
-type TelegramMessagesLog struct {
-	ID             pgtype.UUID        `json:"id"`
-	ProfileID      pgtype.UUID        `json:"profile_id"`
-	TelegramUserID int64              `json:"telegram_user_id"`
-	ChatID         int64              `json:"chat_id"`
-	MessageText    pgtype.Text        `json:"message_text"`
-	IsFromBot      bool               `json:"is_from_bot"`
-	Metadata       []byte             `json:"metadata"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-}
-
-type TelegramWorkflow struct {
-	ID            pgtype.UUID        `json:"id"`
-	ProfileID     pgtype.UUID        `json:"profile_id"`
-	WorkflowName  string             `json:"workflow_name"`
-	WorkflowKey   string             `json:"workflow_key"`
-	Description   pgtype.Text        `json:"description"`
-	TriggerType   string             `json:"trigger_type"`
-	TriggerConfig []byte             `json:"trigger_config"`
-	IsActive      bool               `json:"is_active"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	CreatedBy     pgtype.UUID        `json:"created_by"`
-	// ID бота, к которому привязан workflow
-	BotID pgtype.UUID `json:"bot_id"`
-}
-
-type TelegramWorkflowEdge struct {
-	ID                pgtype.UUID        `json:"id"`
-	WorkflowID        pgtype.UUID        `json:"workflow_id"`
-	SourceNodeID      pgtype.UUID        `json:"source_node_id"`
-	TargetNodeID      pgtype.UUID        `json:"target_node_id"`
-	ConditionField    pgtype.Text        `json:"condition_field"`
-	ConditionOperator pgtype.Text        `json:"condition_operator"`
-	ConditionValue    pgtype.Text        `json:"condition_value"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-}
-
-type TelegramWorkflowNode struct {
-	ID            pgtype.UUID        `json:"id"`
-	WorkflowID    pgtype.UUID        `json:"workflow_id"`
-	NodeKey       string             `json:"node_key"`
-	NodeType      string             `json:"node_type"`
-	NodeLabel     pgtype.Text        `json:"node_label"`
-	PositionX     pgtype.Int4        `json:"position_x"`
-	PositionY     pgtype.Int4        `json:"position_y"`
-	Config        []byte             `json:"config"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	CredentialsID pgtype.UUID        `json:"credentials_id"`
-}
-
-type TelegramWorkflowSchedule struct {
-	ID             pgtype.UUID        `json:"id"`
-	WorkflowID     pgtype.UUID        `json:"workflow_id"`
-	CronExpression string             `json:"cron_expression"`
-	Timezone       pgtype.Text        `json:"timezone"`
-	IsActive       bool               `json:"is_active"`
-	LastRunAt      pgtype.Timestamptz `json:"last_run_at"`
-	NextRunAt      pgtype.Timestamptz `json:"next_run_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type TicketsConfig struct {

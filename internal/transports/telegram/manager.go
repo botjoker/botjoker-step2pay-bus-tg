@@ -5,8 +5,15 @@ package telegram
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"net/http"
+	neturl "net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +96,41 @@ func (m *Manager) SendToConversation(_ context.Context, channelID uuid.UUID, ext
 	}
 	_, err = ref.bot.Send(&tele.Chat{ID: chatID}, text)
 	return err
+}
+
+// WebhookSecret детерминированно выводит per-channel secret_token из
+// INTERNAL_JWT_SECRET. Telegram присылает его в заголовке
+// X-Telegram-Bot-Api-Secret-Token; runtime сверяет без обращения к БД.
+func WebhookSecret(internalSecret string, channelID uuid.UUID) string {
+	mac := hmac.New(sha256.New, []byte(internalSecret))
+	mac.Write([]byte(channelID.String()))
+	return hex.EncodeToString(mac.Sum(nil))[:32]
+}
+
+// SetWebhook регистрирует webhook канала в Telegram. base = AGENT_PUBLIC_URL.
+func (m *Manager) SetWebhook(channelID uuid.UUID, base, internalSecret string) error {
+	ref, ok := m.get(channelID)
+	if !ok {
+		return fmt.Errorf("telegram: no bot for channel %s", channelID)
+	}
+	url := strings.TrimRight(base, "/") + "/webhook/telegram/" + channelID.String()
+	secret := WebhookSecret(internalSecret, channelID)
+
+	form := neturl.Values{}
+	form.Set("url", url)
+	form.Set("secret_token", secret)
+	form.Set("allowed_updates", `["message","callback_query"]`)
+
+	resp, err := http.PostForm("https://api.telegram.org/bot"+ref.token+"/setWebhook", form)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("setWebhook %d: %s", resp.StatusCode, b)
+	}
+	return nil
 }
 
 // editInterval — частота edit message при стриминге (лимит TG ~30 edit/сек).

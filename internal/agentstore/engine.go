@@ -3,6 +3,7 @@ package agentstore
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/api"
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
@@ -35,7 +36,12 @@ type Engine struct {
 	ingest   IngestTrigger
 	opProxy  *runtime.OperatorProxy
 	deps     []runtime.AgentOption // общие зависимости (recorder/memory/intake/tools/...)
+
+	secretsKey string // AGENT_SECRETS_KEY для расшифровки токенов каналов
 }
+
+// SetSecretsKey задаёт AGENT_SECRETS_KEY для расшифровки токенов каналов.
+func (e *Engine) SetSecretsKey(key string) { e.secretsKey = key }
 
 // NewEngine собирает движок. deps — общие AgentOption (recorder, memory, intake,
 // takeover, billing, tools, pii, rag), которые применяются к каждому агенту.
@@ -159,8 +165,7 @@ type VKChannelInfo struct {
 	GroupID     int64
 }
 
-// ListVKChannels возвращает активные VK-каналы.
-// TODO: vk_access_token/vk_secret_key зашифрованы — расшифровать AGENT_SECRETS_KEY.
+// ListVKChannels возвращает активные VK-каналы с расшифрованными токенами.
 func (e *Engine) ListVKChannels(ctx context.Context) ([]VKChannelInfo, error) {
 	rows, err := e.q.ListActiveChannelsByType(ctx, "vk")
 	if err != nil {
@@ -168,10 +173,22 @@ func (e *Engine) ListVKChannels(ctx context.Context) ([]VKChannelInfo, error) {
 	}
 	out := make([]VKChannelInfo, 0, len(rows))
 	for _, ch := range rows {
+		accessToken, err := decryptSecret(fromText(ch.VkAccessToken), e.secretsKey)
+		if err != nil {
+			slog.Warn("vk channel: cannot decrypt access token, skipping",
+				"channel", fromUUID(ch.ID), "err", err)
+			continue
+		}
+		secretKey, err := decryptSecret(fromText(ch.VkSecretKey), e.secretsKey)
+		if err != nil {
+			slog.Warn("vk channel: cannot decrypt secret key, skipping",
+				"channel", fromUUID(ch.ID), "err", err)
+			continue
+		}
 		info := VKChannelInfo{
 			ChannelID:   fromUUID(ch.ID),
-			AccessToken: fromText(ch.VkAccessToken),
-			SecretKey:   fromText(ch.VkSecretKey),
+			AccessToken: accessToken,
+			SecretKey:   secretKey,
 		}
 		if ch.VkGroupID.Valid {
 			info.GroupID = ch.VkGroupID.Int64
@@ -181,9 +198,7 @@ func (e *Engine) ListVKChannels(ctx context.Context) ([]VKChannelInfo, error) {
 	return out, nil
 }
 
-// ListTelegramChannels возвращает активные Telegram-каналы.
-// TODO: tg_bot_token хранится зашифрованным (XChaCha20) — расшифровать ключом
-// AGENT_SECRETS_KEY (как backend utils/crypto.rs). Пока возвращаем как есть.
+// ListTelegramChannels возвращает активные Telegram-каналы с расшифрованными токенами.
 func (e *Engine) ListTelegramChannels(ctx context.Context) ([]ChannelInfo, error) {
 	rows, err := e.q.ListActiveChannelsByType(ctx, "telegram")
 	if err != nil {
@@ -191,7 +206,13 @@ func (e *Engine) ListTelegramChannels(ctx context.Context) ([]ChannelInfo, error
 	}
 	out := make([]ChannelInfo, 0, len(rows))
 	for _, ch := range rows {
-		out = append(out, ChannelInfo{ChannelID: fromUUID(ch.ID), Token: fromText(ch.TgBotToken)})
+		tok, err := decryptSecret(fromText(ch.TgBotToken), e.secretsKey)
+		if err != nil {
+			slog.Warn("telegram channel: cannot decrypt token, skipping",
+				"channel", fromUUID(ch.ID), "err", err)
+			continue // НЕ поднимаем бот с битым токеном
+		}
+		out = append(out, ChannelInfo{ChannelID: fromUUID(ch.ID), Token: tok})
 	}
 	return out, nil
 }
