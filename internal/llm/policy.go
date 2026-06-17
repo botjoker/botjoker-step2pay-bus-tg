@@ -21,8 +21,10 @@ func CheckAllowed(provider string, p ProfilePolicy) error {
 	if p.SovereignMode && !RUProviders[provider] {
 		return fmt.Errorf("provider %q not allowed in sovereign mode (only RU providers)", provider)
 	}
+	// '*' в whitelist = ограничение снято, разрешён любой провайдер
+	// (sovereign_mode выше при этом всё равно соблюдается).
 	for _, allowed := range p.AllowedLLMProviders {
-		if allowed == provider {
+		if allowed == "*" || allowed == provider {
 			return nil
 		}
 	}

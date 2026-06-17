@@ -89,6 +89,8 @@ func main() {
 		runtime.WithBilling(billing),
 		runtime.WithPII(piiClient),
 		runtime.WithFewShot(agentstore.NewFewShot(queries)),
+		// Retrieval: без этого rag по умолчанию noop и агент не использует базу знаний.
+		runtime.WithRAG(newRAGClient(envOr("RAG_URL", "http://sambacrm-agent-rag:8000"), jwtFactory)),
 	}
 
 	sink := api.NewSSEHub(rdb)
