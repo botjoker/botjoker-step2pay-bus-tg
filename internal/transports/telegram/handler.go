@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
+	"github.com/botjoker/sambacrm-business-tg/internal/mdfmt"
 	"github.com/google/uuid"
 	tele "gopkg.in/telebot.v3"
 )
@@ -73,14 +74,26 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 		done = make(chan struct{})
 	)
 
-	flush := func() {
+	// Промежуточные правки — чистым текстом (частичный Markdown в стриме ломал бы
+	// HTML-разметку); финальная — Telegram-HTML с откатом на plain при ошибке парсинга.
+	flush := func(final bool) {
 		mu.Lock()
 		text := acc.String()
 		mu.Unlock()
 		if text == "" {
 			return
 		}
-		if _, err := bot.Edit(sent, clampTelegram(text)); err != nil {
+		if final {
+			htmlText := mdfmt.ToTelegramHTML(clampTelegram(text))
+			if _, err := bot.Edit(sent, htmlText, tele.ModeHTML); err != nil {
+				slog.Debug("telegram: edit html, fallback to plain", "err", err)
+				if _, err2 := bot.Edit(sent, clampTelegram(mdfmt.ToPlain(text))); err2 != nil {
+					slog.Debug("telegram: edit plain", "err", err2)
+				}
+			}
+			return
+		}
+		if _, err := bot.Edit(sent, clampTelegram(mdfmt.ToPlain(text))); err != nil {
 			slog.Debug("telegram: edit", "err", err)
 		}
 	}
@@ -91,9 +104,9 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 		for {
 			select {
 			case <-ticker.C:
-				flush()
+				flush(false)
 			case <-done:
-				flush()
+				flush(true)
 				return
 			}
 		}

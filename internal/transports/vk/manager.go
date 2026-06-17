@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
+	"github.com/botjoker/sambacrm-business-tg/internal/mdfmt"
 	"github.com/google/uuid"
 )
 
@@ -100,7 +101,7 @@ func (m *Manager) sendMessage(ctx context.Context, ch Channel, peerID int64, tex
 		"access_token": {ch.AccessToken},
 		"v":            {vkAPIVersion},
 		"peer_id":      {strconv.FormatInt(peerID, 10)},
-		"message":      {clampVK(text)},
+		"message":      {clampVK(mdfmt.ToPlain(text))},
 		"random_id":    {strconv.FormatInt(time.Now().UnixNano()&0x7fffffff, 10)},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.apiBase+"/messages.send",
