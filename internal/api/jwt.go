@@ -18,6 +18,7 @@ type jwtClaims struct {
 	ProfileID      string `json:"pid,omitempty"`
 	AgentID        string `json:"aid,omitempty"`
 	Scope          string `json:"scope,omitempty"`
+	Service        string `json:"service,omitempty"` // rag-svc и backend требуют service=="agent"
 	Exp            int64  `json:"exp"`
 	Iat            int64  `json:"iat"`
 }
@@ -48,7 +49,7 @@ func issueJWT(secret string, claims jwtClaims, ttl time.Duration, now time.Time)
 // IssueInternalToken выдаёт internal-JWT (scope tool-exec) — для tools/billing
 // клиентов, которым нужен Bearer к backend/runtime. Экспортируется для cmd/agent.
 func IssueInternalToken(secret string, ttl time.Duration) (string, error) {
-	return issueJWT(secret, jwtClaims{Scope: "tool-exec"}, ttl, time.Now())
+	return issueJWT(secret, jwtClaims{Service: "agent", Scope: "tool-exec"}, ttl, time.Now())
 }
 
 var errInvalidToken = errors.New("invalid token")
