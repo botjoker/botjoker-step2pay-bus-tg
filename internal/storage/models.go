@@ -105,6 +105,7 @@ type AgentChannel struct {
 	IsDeleted           bool               `json:"is_deleted"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	VkConfirmation      pgtype.Text        `json:"vk_confirmation"`
 }
 
 type AgentConsent struct {

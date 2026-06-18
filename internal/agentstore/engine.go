@@ -159,10 +159,11 @@ type ChannelInfo struct {
 
 // VKChannelInfo — VK-канал с токеном/секретом/группой.
 type VKChannelInfo struct {
-	ChannelID   uuid.UUID
-	AccessToken string
-	SecretKey   string
-	GroupID     int64
+	ChannelID    uuid.UUID
+	AccessToken  string
+	SecretKey    string
+	GroupID      int64
+	Confirmation string // код подтверждения VK Callback (из БД, не ENV)
 }
 
 // ListVKChannels возвращает активные VK-каналы с расшифрованными токенами.
@@ -193,6 +194,7 @@ func (e *Engine) ListVKChannels(ctx context.Context) ([]VKChannelInfo, error) {
 		if ch.VkGroupID.Valid {
 			info.GroupID = ch.VkGroupID.Int64
 		}
+		info.Confirmation = fromText(ch.VkConfirmation)
 		out = append(out, info)
 	}
 	return out, nil

@@ -451,7 +451,7 @@ func (q *Queries) GetAgentConversationByExternal(ctx context.Context, arg GetAge
 
 const getChannel = `-- name: GetChannel :one
 
-SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at FROM agent_channels
+SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at, vk_confirmation FROM agent_channels
 WHERE id = $1 AND is_deleted = false
 `
 
@@ -487,12 +487,13 @@ func (q *Queries) GetChannel(ctx context.Context, id pgtype.UUID) (AgentChannel,
 		&i.IsDeleted,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VkConfirmation,
 	)
 	return i, err
 }
 
 const getChannelByWebSlug = `-- name: GetChannelByWebSlug :one
-SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at FROM agent_channels
+SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at, vk_confirmation FROM agent_channels
 WHERE profile_id = $1 AND web_slug = $2 AND is_active = true AND is_deleted = false
 `
 
@@ -530,6 +531,7 @@ func (q *Queries) GetChannelByWebSlug(ctx context.Context, arg GetChannelByWebSl
 		&i.IsDeleted,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VkConfirmation,
 	)
 	return i, err
 }
@@ -685,7 +687,7 @@ func (q *Queries) GetPrecedingUserMessage(ctx context.Context, arg GetPrecedingU
 }
 
 const getWebChannelBySlug = `-- name: GetWebChannelBySlug :one
-SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at FROM agent_channels
+SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at, vk_confirmation FROM agent_channels
 WHERE web_slug = $1 AND channel_type = 'web' AND is_active = true AND is_deleted = false
 LIMIT 1
 `
@@ -720,6 +722,7 @@ func (q *Queries) GetWebChannelBySlug(ctx context.Context, webSlug pgtype.Text) 
 		&i.IsDeleted,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VkConfirmation,
 	)
 	return i, err
 }
@@ -995,7 +998,7 @@ func (q *Queries) LastMessages(ctx context.Context, arg LastMessagesParams) ([]A
 }
 
 const listActiveChannelsByType = `-- name: ListActiveChannelsByType :many
-SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at FROM agent_channels
+SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at, vk_confirmation FROM agent_channels
 WHERE channel_type = $1 AND is_active = true AND is_deleted = false
 `
 
@@ -1034,6 +1037,7 @@ func (q *Queries) ListActiveChannelsByType(ctx context.Context, channelType stri
 			&i.IsDeleted,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.VkConfirmation,
 		); err != nil {
 			return nil, err
 		}

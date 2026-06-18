@@ -146,7 +146,11 @@ func main() {
 	vkManager := vk.NewManager(engine)
 	if chans, err := engine.ListVKChannels(ctx); err == nil {
 		for _, c := range chans {
-			conf := envOr("VK_CONFIRMATION_"+strconv.FormatInt(c.GroupID, 10), os.Getenv("VK_CONFIRMATION"))
+			// Confirmation-код берём из БД (per-channel); ENV — только legacy-fallback.
+			conf := c.Confirmation
+			if conf == "" {
+				conf = envOr("VK_CONFIRMATION_"+strconv.FormatInt(c.GroupID, 10), os.Getenv("VK_CONFIRMATION"))
+			}
 			if err := vkManager.Start(vk.Channel{
 				ChannelID:    c.ChannelID,
 				AccessToken:  c.AccessToken,
