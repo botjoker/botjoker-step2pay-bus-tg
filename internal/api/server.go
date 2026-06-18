@@ -78,6 +78,7 @@ func (s *Server) handler() http.Handler {
 	// Public chat (виджет / client) — CORS.
 	mux.HandleFunc("POST /chat/start", s.handleChatStart)
 	mux.HandleFunc("GET /chat/sse", s.handleSSE)
+	mux.HandleFunc("GET /chat/history", s.handleChatHistory)
 	mux.HandleFunc("POST /chat/message", s.handleChatMessage)
 
 	// Internal (internal-JWT).

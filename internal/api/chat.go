@@ -77,6 +77,32 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	_ = s.sse.Stream(r.Context(), w, convID)
 }
 
+// handleChatHistory отдаёт видимую историю диалога веб-виджету (восстановление
+// при перезагрузке/реконнекте). Токен — тот же sse_token (несёт conversation_id).
+func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {
+	if s.engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "engine not wired")
+		return
+	}
+	token := r.URL.Query().Get("token")
+	claims, err := verifyJWT(s.internalSecret, token, time.Now())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid token")
+		return
+	}
+	convID, err := uuid.Parse(claims.ConversationID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad conversation id")
+		return
+	}
+	msgs, err := s.engine.History(r.Context(), convID, 100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "history failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
+}
+
 type chatMessageRequest struct {
 	Token string `json:"token"`
 	Text  string `json:"text"`

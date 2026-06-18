@@ -156,6 +156,18 @@ WHERE conversation_id = $1
 ORDER BY created_at ASC
 LIMIT $2 OFFSET $3;
 
+-- name: ChatHistory :many
+-- История для веб-виджета: только видимые реплики (user/assistant/operator),
+-- без tool/system и пустых. По возрастанию времени.
+SELECT role, content, created_at
+FROM agent_messages
+WHERE conversation_id = $1
+  AND role IN ('user', 'assistant', 'operator')
+  AND content IS NOT NULL
+  AND content <> ''
+ORDER BY created_at ASC
+LIMIT $2;
+
 -- name: LastMessages :many
 SELECT * FROM agent_messages
 WHERE conversation_id = $1

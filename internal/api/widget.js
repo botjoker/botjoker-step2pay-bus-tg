@@ -139,8 +139,26 @@
         if (!data) return null;
         state.token = data.sse_token;
         openSSE(data.sse_token);
+        loadHistory(data.sse_token);
         return state.token;
       });
+  }
+
+  // loadHistory восстанавливает историю диалога при открытии/перезагрузке виджета.
+  function loadHistory(token) {
+    if (state.messages.length > 0) return; // уже есть локальные сообщения — не затираем
+    fetch(apiBase + "/chat/history?token=" + encodeURIComponent(token))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data || !data.messages || !data.messages.length) return;
+        if (state.messages.length > 0) return;
+        for (var i = 0; i < data.messages.length; i++) {
+          var m = data.messages[i];
+          state.messages.push({ role: m.role, content: m.content });
+        }
+        renderMessages();
+      })
+      .catch(function () { /* история не критична */ });
   }
 
   function openSSE(token) {

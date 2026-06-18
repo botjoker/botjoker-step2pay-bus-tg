@@ -27,6 +27,50 @@ func (q *Queries) AppendMessageCitation(ctx context.Context, arg AppendMessageCi
 	return err
 }
 
+const chatHistory = `-- name: ChatHistory :many
+SELECT role, content, created_at
+FROM agent_messages
+WHERE conversation_id = $1
+  AND role IN ('user', 'assistant', 'operator')
+  AND content IS NOT NULL
+  AND content <> ''
+ORDER BY created_at ASC
+LIMIT $2
+`
+
+type ChatHistoryParams struct {
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	Limit          int32       `json:"limit"`
+}
+
+type ChatHistoryRow struct {
+	Role      string             `json:"role"`
+	Content   pgtype.Text        `json:"content"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+// История для веб-виджета: только видимые реплики (user/assistant/operator),
+// без tool/system и пустых. По возрастанию времени.
+func (q *Queries) ChatHistory(ctx context.Context, arg ChatHistoryParams) ([]ChatHistoryRow, error) {
+	rows, err := q.db.Query(ctx, chatHistory, arg.ConversationID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatHistoryRow{}
+	for rows.Next() {
+		var i ChatHistoryRow
+		if err := rows.Scan(&i.Role, &i.Content, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countConversationMessages = `-- name: CountConversationMessages :one
 SELECT COUNT(*) FROM agent_messages WHERE conversation_id = $1
 `

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -50,8 +51,11 @@ func (h *SSEHub) PublishEvent(ctx context.Context, convID uuid.UUID, evType, tex
 	return h.Publish(ctx, convID, sseMessage{Type: evType, Text: text, Tool: tool, Error: errStr})
 }
 
-// Stream подписывается на канал и пишет события в ResponseWriter в формате SSE,
-// пока не придёт done/error или не закроется соединение.
+// Stream подписывается на канал диалога и пишет события в ResponseWriter в формате
+// SSE до отключения клиента (ctx.Done). Соединение НЕ закрывается на done/error:
+// это персистентный канал диалога — после ответа AI он остаётся открытым, чтобы
+// доставлять последующие реплики и сообщения оператора (live takeover). Иначе при
+// перехвате у клиента не было бы живой подписки и pub/sub-сообщения терялись бы.
 func (h *SSEHub) Stream(ctx context.Context, w http.ResponseWriter, convID uuid.UUID) error {
 	if h.rdb == nil {
 		return fmt.Errorf("sse hub: redis not configured")
@@ -70,6 +74,10 @@ func (h *SSEHub) Stream(ctx context.Context, w http.ResponseWriter, convID uuid.
 	defer sub.Close()
 	ch := sub.Channel()
 
+	// Keep-alive: не даём прокси (nginx) закрыть простаивающее соединение.
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -80,13 +88,10 @@ func (h *SSEHub) Stream(ctx context.Context, w http.ResponseWriter, convID uuid.
 			}
 			fmt.Fprintf(w, "data: %s\n\n", m.Payload)
 			flusher.Flush()
-
-			var parsed sseMessage
-			if json.Unmarshal([]byte(m.Payload), &parsed) == nil {
-				if parsed.Type == "done" || parsed.Type == "error" {
-					return nil
-				}
-			}
+		case <-keepalive.C:
+			// Комментарий-пинг: EventSource игнорирует строки, начинающиеся с ':'.
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
 		}
 	}
 }

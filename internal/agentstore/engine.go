@@ -242,6 +242,25 @@ func (e *Engine) OperatorMessage(ctx context.Context, conversationID, operatorAc
 	})
 }
 
+// History возвращает видимую историю диалога для веб-виджета.
+func (e *Engine) History(ctx context.Context, conversationID uuid.UUID, limit int) ([]api.ChatHistoryMessage, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := e.q.ChatHistory(ctx, storage.ChatHistoryParams{
+		ConversationID: toUUID(conversationID),
+		Limit:          int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.ChatHistoryMessage, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, api.ChatHistoryMessage{Role: r.Role, Content: fromText(r.Content)})
+	}
+	return out, nil
+}
+
 func (e *Engine) buildAgent(ctx context.Context, agentID uuid.UUID) (*runtime.Agent, error) {
 	provider, cfg, err := e.factory(ctx, agentID)
 	if err != nil {

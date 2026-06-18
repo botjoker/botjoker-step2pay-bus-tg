@@ -31,6 +31,16 @@ type Engine interface {
 	// OperatorMessage пересылает сообщение оператора в транспорт (live takeover).
 	// att != nil → к сообщению прикрепляется файл-вложение (документ, F1-1).
 	OperatorMessage(ctx context.Context, conversationID, operatorAccountID uuid.UUID, text, mode string, att *runtime.Attachment) error
+
+	// History возвращает видимую историю диалога для веб-виджета (восстановление
+	// при перезагрузке/реконнекте SSE).
+	History(ctx context.Context, conversationID uuid.UUID, limit int) ([]ChatHistoryMessage, error)
+}
+
+// ChatHistoryMessage — одна реплика истории для веб-виджета.
+type ChatHistoryMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 // StartResult — ответ StartConversation.
