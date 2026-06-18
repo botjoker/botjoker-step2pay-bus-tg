@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
+	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/google/uuid"
 )
 
@@ -28,7 +29,8 @@ type Engine interface {
 	TriggerIngest(ctx context.Context, sourceID, profileID uuid.UUID) error
 
 	// OperatorMessage пересылает сообщение оператора в транспорт (live takeover).
-	OperatorMessage(ctx context.Context, conversationID, operatorAccountID uuid.UUID, text, mode string) error
+	// att != nil → к сообщению прикрепляется файл-вложение (документ, F1-1).
+	OperatorMessage(ctx context.Context, conversationID, operatorAccountID uuid.UUID, text, mode string, att *runtime.Attachment) error
 }
 
 // StartResult — ответ StartConversation.

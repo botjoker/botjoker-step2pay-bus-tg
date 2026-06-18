@@ -10,7 +10,8 @@ import (
 // buildMessages собирает массив сообщений для LLM: system (persona + intake +
 // RAG + few-shot + language) → история → текущее сообщение пользователя.
 func (a *Agent) buildMessages(intake string, chunks []RAGChunk, fewShot []FewShotExample,
-	history []llm.Message, userMsg string, attach []llm.Attachment, userLang string) []llm.Message {
+	history []llm.Message, userMsg string, attach []llm.Attachment, userLang string,
+	sellableDocs []SellableDoc) []llm.Message {
 
 	var sys strings.Builder
 	sys.WriteString(a.cfg.Persona)
@@ -18,6 +19,11 @@ func (a *Agent) buildMessages(intake string, chunks []RAGChunk, fewShot []FewSho
 
 	if intake != "" {
 		sys.WriteString(intake)
+		sys.WriteString("\n\n")
+	}
+
+	if block := renderSellableDocsBlock(sellableDocs); block != "" {
+		sys.WriteString(block)
 		sys.WriteString("\n\n")
 	}
 
@@ -109,6 +115,47 @@ func renderIntakeBlock(fields []IntakeField, facts []Fact) string {
 	b.WriteString("    Когда что-то узнаёшь — вызови record_intake_fact(field_key, value).\n")
 	b.WriteString("  </how_to_use>\n")
 	b.WriteString("</intake>")
+	return b.String()
+}
+
+// hasTool сообщает, входит ли инструмент с данным именем в набор включённых.
+func hasTool(tools []llm.ToolDef, name string) bool {
+	for i := range tools {
+		if tools[i].Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// renderSellableDocsBlock формирует блок <paid_documents> со списком платных
+// документов, которые агент может оформить через tool sell_document (AC-3).
+// Вызывается только когда tool sell_document включён и перечень непуст.
+func renderSellableDocsBlock(docs []SellableDoc) string {
+	if len(docs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<paid_documents>\n")
+	b.WriteString("  Ты можешь оформить клиенту платный документ. Доступные документы:\n")
+	for _, d := range docs {
+		b.WriteString(fmt.Sprintf("  - %s (%s %s), template_id=%s\n", d.Name, d.Price, d.Currency, d.TemplateID))
+		if len(d.RequiredVars) > 0 {
+			b.WriteString(fmt.Sprintf("    Обязательно собери: %s\n", strings.Join(d.RequiredVars, ", ")))
+		}
+		if len(d.OptionalVars) > 0 {
+			b.WriteString(fmt.Sprintf("    Можно уточнить: %s\n", strings.Join(d.OptionalVars, ", ")))
+		}
+	}
+	b.WriteString("  <how_to_use>\n")
+	b.WriteString("    Предлагай документ только когда он уместен и клиент в нём заинтересован.\n")
+	b.WriteString("    Сначала собери обязательные поля (через обычный диалог / record_intake_fact),\n")
+	b.WriteString("    затем — когда клиент согласился оплатить — вызови\n")
+	b.WriteString("    sell_document(template_id='<id из списка>', variables={собранные значения}).\n")
+	b.WriteString("    Уже собранные факты диалога подмешаются автоматически — не дублируй вопросы.\n")
+	b.WriteString("    Не называй цену «примерно»: указывай точную сумму из списка.\n")
+	b.WriteString("  </how_to_use>\n")
+	b.WriteString("</paid_documents>")
 	return b.String()
 }
 

@@ -12,10 +12,14 @@ import (
 
 // sseMessage — сериализуемое представление события для SSE/Redis.
 type sseMessage struct {
-	Type  string `json:"type"` // text | tool_call | done | error
+	Type  string `json:"type"` // text | tool_call | done | error | operator | file
 	Text  string `json:"text,omitempty"`
 	Tool  string `json:"tool,omitempty"`
 	Error string `json:"error,omitempty"`
+	// Поля файла-вложения (type=file, F1-1).
+	URL      string `json:"url,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	MIME     string `json:"mime,omitempty"`
 }
 
 // SSEHub публикует и доставляет события диалога через Redis Pub/Sub

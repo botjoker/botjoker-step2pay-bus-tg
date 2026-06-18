@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
+	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/google/uuid"
 )
 
@@ -103,6 +104,14 @@ type operatorMessageRequest struct {
 	OperatorAccountID string `json:"operator_account_id"`
 	Text              string `json:"text"`
 	Mode              string `json:"mode"`
+	// Attachment — опциональный файл-вложение (документ, F1-1).
+	Attachment *operatorAttachment `json:"attachment,omitempty"`
+}
+
+type operatorAttachment struct {
+	URL      string `json:"url"`
+	Filename string `json:"filename"`
+	MIME     string `json:"mime"`
 }
 
 // handleOperatorMessage — пересылка сообщения оператора (live takeover) в транспорт.
@@ -122,7 +131,15 @@ func (s *Server) handleOperatorMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad ids")
 		return
 	}
-	if err := s.engine.OperatorMessage(r.Context(), convID, opID, req.Text, req.Mode); err != nil {
+	var att *runtime.Attachment
+	if req.Attachment != nil && req.Attachment.URL != "" {
+		att = &runtime.Attachment{
+			URL:      req.Attachment.URL,
+			Filename: req.Attachment.Filename,
+			MIME:     req.Attachment.MIME,
+		}
+	}
+	if err := s.engine.OperatorMessage(r.Context(), convID, opID, req.Text, req.Mode, att); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

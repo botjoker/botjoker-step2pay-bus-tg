@@ -387,6 +387,22 @@ type AgentOutreachRule struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AgentPaidDeliverable struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	TemplateID     pgtype.UUID        `json:"template_id"`
+	VarsSnapshot   []byte             `json:"vars_snapshot"`
+	PriceAmount    pgtype.Numeric     `json:"price_amount"`
+	Currency       string             `json:"currency"`
+	Status         string             `json:"status"`
+	PaymentID      pgtype.Text        `json:"payment_id"`
+	ResultMediaID  pgtype.UUID        `json:"result_media_id"`
+	Error          pgtype.Text        `json:"error"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentPlanLimit struct {
 	PlanTier                     string             `json:"plan_tier"`
 	DisplayName                  string             `json:"display_name"`
@@ -799,6 +815,27 @@ type DivisionSize struct {
 	IsActive        bool               `json:"is_active"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DocumentTemplate struct {
+	ID           pgtype.UUID        `json:"id"`
+	ProfileID    pgtype.UUID        `json:"profile_id"`
+	EntityType   pgtype.Text        `json:"entity_type"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	Name         string             `json:"name"`
+	DocType      string             `json:"doc_type"`
+	BodyTemplate string             `json:"body_template"`
+	Variables    []byte             `json:"variables"`
+	PriceAmount  pgtype.Numeric     `json:"price_amount"`
+	Currency     string             `json:"currency"`
+	Disclaimer   pgtype.Text        `json:"disclaimer"`
+	Format       string             `json:"format"`
+	IsActive     bool               `json:"is_active"`
+	IsDeleted    bool               `json:"is_deleted"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy    pgtype.UUID        `json:"created_by"`
+	UpdatedBy    pgtype.UUID        `json:"updated_by"`
 }
 
 type EducationBalanceAccount struct {

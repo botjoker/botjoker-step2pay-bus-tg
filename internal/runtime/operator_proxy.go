@@ -8,19 +8,29 @@ import (
 	"github.com/google/uuid"
 )
 
+// Attachment — файл-вложение к операторскому сообщению (напр. оплаченный PDF, F1-1).
+type Attachment struct {
+	URL      string
+	Filename string
+	MIME     string
+}
+
 // OperatorMessage — событие от backend, когда оператор написал в чат (live takeover).
 type OperatorMessage struct {
 	ConversationID    uuid.UUID
 	OperatorAccountID uuid.UUID
 	Text              string
 	Mode              string // 'silent' | 'open'
+	// Attachment — опциональный файл (документ); nil = обычное текстовое сообщение.
+	Attachment *Attachment
 }
 
 // TransportSender — отправка сообщения в конкретный канал. Реализуется каждым
 // транспортом (telegram/vk/web). convID нужен web-транспорту (доставка по SSE-каналу
 // диалога); telegram/vk адресуют по channelID+externalUserID и convID игнорируют.
+// att != nil → доставить файл (документом/вложением); транспорт сам выбирает форму.
 type TransportSender interface {
-	SendToConversation(ctx context.Context, convID, channelID uuid.UUID, externalUserID, text string) error
+	SendToConversation(ctx context.Context, convID, channelID uuid.UUID, externalUserID, text string, att *Attachment) error
 }
 
 // ConvRoute — куда слать: тип канала + идентификаторы получателя.
@@ -81,5 +91,5 @@ func (p *OperatorProxy) Handle(ctx context.Context, op OperatorMessage) error {
 	if op.Mode == "open" {
 		text = "Оператор: " + op.Text
 	}
-	return sender.SendToConversation(ctx, op.ConversationID, route.ChannelID, route.ExternalUserID, text)
+	return sender.SendToConversation(ctx, op.ConversationID, route.ChannelID, route.ExternalUserID, text, op.Attachment)
 }

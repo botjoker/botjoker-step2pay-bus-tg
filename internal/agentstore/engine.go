@@ -228,7 +228,8 @@ func (e *Engine) TriggerIngest(ctx context.Context, sourceID, profileID uuid.UUI
 }
 
 // OperatorMessage пересылает сообщение оператора через OperatorProxy.
-func (e *Engine) OperatorMessage(ctx context.Context, conversationID, operatorAccountID uuid.UUID, text, mode string) error {
+// att != nil → к сообщению прикрепляется файл-вложение (документ, F1-1).
+func (e *Engine) OperatorMessage(ctx context.Context, conversationID, operatorAccountID uuid.UUID, text, mode string, att *runtime.Attachment) error {
 	if e.opProxy == nil {
 		return errors.New("operator proxy not configured")
 	}
@@ -237,6 +238,7 @@ func (e *Engine) OperatorMessage(ctx context.Context, conversationID, operatorAc
 		OperatorAccountID: operatorAccountID,
 		Text:              text,
 		Mode:              mode,
+		Attachment:        att,
 	})
 }
 

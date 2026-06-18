@@ -99,6 +99,12 @@
       var cls = m.role === "user" ? "scw-user" : "scw-ai";
       var pre = "";
       if (m.role === "operator") { cls = "scw-ai scw-op"; pre = '<span class="scw-op-tag">Оператор</span>'; }
+      if (m.role === "file") {
+        var label = m.content ? esc(m.content) + "<br>" : "";
+        html += '<div class="scw-msg scw-ai">' + label +
+          '<a class="scw-file" href="' + esc(m.url) + '" target="_blank" rel="noopener" download>📄 ' + esc(m.filename) + "</a></div>";
+        continue;
+      }
       html += '<div class="scw-msg ' + cls + '">' + pre + esc(m.content) + "</div>";
     }
     box.innerHTML = html;
@@ -148,6 +154,11 @@
         } else if (ev.type === "operator" && ev.text) {
           // Сообщение живого оператора (live takeover) — отдельным пузырём.
           state.messages.push({ role: "operator", content: ev.text });
+          state.streaming = false;
+          renderMessages();
+        } else if (ev.type === "file" && ev.url) {
+          // Файл-вложение (напр. оплаченный документ, F1-1) — пузырь со ссылкой.
+          state.messages.push({ role: "file", content: ev.text || "", url: ev.url, filename: ev.filename || "Документ" });
           state.streaming = false;
           renderMessages();
         } else if (ev.type === "done" || ev.type === "error") {

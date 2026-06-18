@@ -14,6 +14,7 @@ import (
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
 	"github.com/botjoker/sambacrm-business-tg/internal/mdfmt"
+	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/google/uuid"
 )
 
@@ -84,7 +85,7 @@ func (m *Manager) Count() int {
 
 // SendToConversation реализует runtime.TransportSender (для live takeover).
 // convID не нужен: VK адресует по channelID + externalUserID (peer id).
-func (m *Manager) SendToConversation(ctx context.Context, _ uuid.UUID, channelID uuid.UUID, externalUserID, text string) error {
+func (m *Manager) SendToConversation(ctx context.Context, _ uuid.UUID, channelID uuid.UUID, externalUserID, text string, att *runtime.Attachment) error {
 	ch, ok := m.get(channelID)
 	if !ok {
 		return fmt.Errorf("vk: channel %s not running", channelID)
@@ -92,6 +93,14 @@ func (m *Manager) SendToConversation(ctx context.Context, _ uuid.UUID, channelID
 	peerID, err := strconv.ParseInt(externalUserID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("vk: bad peer id %q", externalUserID)
+	}
+	// VK не принимает внешние файлы без upload-сервера — отдаём документ ссылкой
+	// в тексте (F1-1). Загрузку в docs.save можно добавить позже при необходимости.
+	if att != nil && att.URL != "" {
+		if text != "" {
+			text += "\n\n"
+		}
+		text += att.URL
 	}
 	return m.sendMessage(ctx, ch, peerID, text)
 }

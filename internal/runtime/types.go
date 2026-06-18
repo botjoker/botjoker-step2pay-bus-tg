@@ -23,6 +23,21 @@ type AgentConfig struct {
 	AutoDetectLang   bool
 	AllowedLanguages []string
 	VisionEnabled    bool
+	// SellableDocs — платные документы, которые агент может оформить (AC-3).
+	// Инъектируются в системный промпт, если включён tool sell_document.
+	SellableDocs []SellableDoc
+}
+
+// SellableDoc — продаваемый агентом документ (из document_templates).
+type SellableDoc struct {
+	TemplateID   string
+	Name         string
+	DocType      string
+	Price        string // отформатированная цена, напр. "1500.00"
+	Currency     string
+	Disclaimer   string
+	RequiredVars []string // ключи переменных с required=true
+	OptionalVars []string // прочие ключи переменных
 }
 
 // RunRequest — входящее сообщение для обработки.

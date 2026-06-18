@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
+	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/google/uuid"
 	tele "gopkg.in/telebot.v3"
 )
@@ -86,7 +87,7 @@ func (m *Manager) Count() int {
 
 // SendToConversation реализует runtime.TransportSender (для live takeover).
 // convID не нужен: Telegram адресует по channelID + externalUserID (chat id).
-func (m *Manager) SendToConversation(_ context.Context, _ uuid.UUID, channelID uuid.UUID, externalUserID, text string) error {
+func (m *Manager) SendToConversation(_ context.Context, _ uuid.UUID, channelID uuid.UUID, externalUserID, text string, att *runtime.Attachment) error {
 	ref, ok := m.get(channelID)
 	if !ok {
 		return fmt.Errorf("telegram: channel %s not running", channelID)
@@ -95,7 +96,17 @@ func (m *Manager) SendToConversation(_ context.Context, _ uuid.UUID, channelID u
 	if err != nil {
 		return fmt.Errorf("telegram: bad external user id %q", externalUserID)
 	}
-	_, err = ref.bot.Send(&tele.Chat{ID: chatID}, text)
+	to := &tele.Chat{ID: chatID}
+	// Вложение (F1-1) — отправляем документом; текст идёт подписью.
+	if att != nil && att.URL != "" {
+		doc := &tele.Document{File: tele.FromURL(att.URL), Caption: text}
+		if att.Filename != "" {
+			doc.FileName = att.Filename
+		}
+		_, err = ref.bot.Send(to, doc)
+		return err
+	}
+	_, err = ref.bot.Send(to, text)
 	return err
 }
 

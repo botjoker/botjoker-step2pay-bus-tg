@@ -54,6 +54,18 @@ WHERE profile_id = $1 AND slug = $2 AND is_deleted = false;
 SELECT * FROM agent_tools
 WHERE agent_id = $1 AND is_enabled = true;
 
+-- name: ListAgentSellableDocuments :many
+-- Платные документы, доступные агенту: привязанные к нему ИЛИ универсальные
+-- агентские шаблоны тенанта (entity_type='agent', без конкретного agent_id).
+-- Используется для инъекции перечня в системный промпт (AC-3).
+SELECT id, name, doc_type, variables, price_amount, currency, disclaimer
+FROM document_templates
+WHERE profile_id = $1
+  AND is_active = true
+  AND is_deleted = false
+  AND (agent_id = $2 OR (entity_type = 'agent' AND agent_id IS NULL))
+ORDER BY name;
+
 -- ============================================================
 -- AGENT_CHANNELS
 -- ============================================================

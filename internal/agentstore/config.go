@@ -2,6 +2,8 @@ package agentstore
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
 	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
@@ -34,7 +36,57 @@ func LoadAgentConfig(ctx context.Context, q *storage.Queries, agentID uuid.UUID)
 		AllowedLanguages: a.AllowedLanguages,
 		VisionEnabled:    a.VisionEnabled.Bool,
 	}
+
+	// Платные документы агента (AC-3). Промах не критичен — фича просто не
+	// попадёт в промпт; не роняем загрузку агента.
+	if docs, derr := q.ListAgentSellableDocuments(ctx, storage.ListAgentSellableDocumentsParams{
+		ProfileID: a.ProfileID,
+		AgentID:   a.ID,
+	}); derr == nil {
+		cfg.SellableDocs = mapSellableDocs(docs)
+	}
+
 	return cfg, a.LlmProvider, a.LlmModel, fromUUID(a.LlmCredentialsID), nil
+}
+
+// tplVar — описание переменной шаблона (document_templates.variables[]).
+type tplVar struct {
+	Key      string `json:"key"`
+	Required bool   `json:"required"`
+}
+
+// mapSellableDocs преобразует строки document_templates в runtime.SellableDoc,
+// раскладывая описание переменных на required/optional ключи.
+func mapSellableDocs(rows []storage.ListAgentSellableDocumentsRow) []runtime.SellableDoc {
+	out := make([]runtime.SellableDoc, 0, len(rows))
+	for _, r := range rows {
+		var vars []tplVar
+		if len(r.Variables) > 0 {
+			_ = json.Unmarshal(r.Variables, &vars)
+		}
+		var required, optional []string
+		for _, v := range vars {
+			if v.Key == "" {
+				continue
+			}
+			if v.Required {
+				required = append(required, v.Key)
+			} else {
+				optional = append(optional, v.Key)
+			}
+		}
+		out = append(out, runtime.SellableDoc{
+			TemplateID:   fromUUID(r.ID).String(),
+			Name:         r.Name,
+			DocType:      r.DocType,
+			Price:        fmt.Sprintf("%.2f", numericToFloat(r.PriceAmount)),
+			Currency:     r.Currency,
+			Disclaimer:   fromText(r.Disclaimer),
+			RequiredVars: required,
+			OptionalVars: optional,
+		})
+	}
+	return out
 }
 
 // LoadProviderCredentials читает credential тенанта, расшифровывает key1/2/3

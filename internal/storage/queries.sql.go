@@ -1074,6 +1074,62 @@ func (q *Queries) ListAgentProfileIds(ctx context.Context) ([]pgtype.UUID, error
 	return items, nil
 }
 
+const listAgentSellableDocuments = `-- name: ListAgentSellableDocuments :many
+SELECT id, name, doc_type, variables, price_amount, currency, disclaimer
+FROM document_templates
+WHERE profile_id = $1
+  AND is_active = true
+  AND is_deleted = false
+  AND (agent_id = $2 OR (entity_type = 'agent' AND agent_id IS NULL))
+ORDER BY name
+`
+
+type ListAgentSellableDocumentsParams struct {
+	ProfileID pgtype.UUID `json:"profile_id"`
+	AgentID   pgtype.UUID `json:"agent_id"`
+}
+
+type ListAgentSellableDocumentsRow struct {
+	ID          pgtype.UUID    `json:"id"`
+	Name        string         `json:"name"`
+	DocType     string         `json:"doc_type"`
+	Variables   []byte         `json:"variables"`
+	PriceAmount pgtype.Numeric `json:"price_amount"`
+	Currency    string         `json:"currency"`
+	Disclaimer  pgtype.Text    `json:"disclaimer"`
+}
+
+// Платные документы, доступные агенту: привязанные к нему ИЛИ универсальные
+// агентские шаблоны тенанта (entity_type='agent', без конкретного agent_id).
+// Используется для инъекции перечня в системный промпт (AC-3).
+func (q *Queries) ListAgentSellableDocuments(ctx context.Context, arg ListAgentSellableDocumentsParams) ([]ListAgentSellableDocumentsRow, error) {
+	rows, err := q.db.Query(ctx, listAgentSellableDocuments, arg.ProfileID, arg.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentSellableDocumentsRow{}
+	for rows.Next() {
+		var i ListAgentSellableDocumentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.DocType,
+			&i.Variables,
+			&i.PriceAmount,
+			&i.Currency,
+			&i.Disclaimer,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listConversationFacts = `-- name: ListConversationFacts :many
 SELECT id, profile_id, conversation_id, intake_field_id, field_key, field_value, confidence, source_message_id, source_excerpt, is_verified, superseded_by, created_at, updated_at FROM agent_conversation_facts
 WHERE conversation_id = $1 AND superseded_by IS NULL
