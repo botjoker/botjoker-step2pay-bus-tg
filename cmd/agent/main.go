@@ -171,7 +171,7 @@ func main() {
 	if cheap, err := buildProvider(envOr("INSIGHTS_PROVIDER", "yandex_gpt"), envOr("INSIGHTS_MODEL", "yandexgpt-lite")); err == nil {
 		model := envOr("INSIGHTS_MODEL", "yandexgpt-lite")
 		insightsSvc := agentstore.NewInsightsService(queries, cheap, model)
-		digestSvc := agentstore.NewDigestService(queries, cheap, model)
+		digestSvc := agentstore.NewDigestService(queries, cheap, model, makeNotifier(backendURL, jwtFactory))
 		startInsights(ctx, insightsSvc, digestSvc)
 	} else {
 		slog.Warn("insights disabled (provider build failed)", "err", err)
@@ -324,6 +324,38 @@ func buildProvider(name, model string) (llm.LLMProvider, error) {
 }
 
 // makeIngestTrigger возвращает функцию-триггер индексации (POST в rag-svc /v1/ingest).
+// makeNotifier создаёт NotifyFunc, отправляющую письмо владельцу тенанта через
+// backend (POST /internal/agents/notify, internal-JWT). Получателя (email владельца)
+// определяет backend по profile_id.
+func makeNotifier(backendURL string, jwtFactory func() (string, error)) agentstore.NotifyFunc {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return func(ctx context.Context, profileID uuid.UUID, subject, html string) error {
+		body, _ := json.Marshal(map[string]any{
+			"profile_id": profileID.String(),
+			"subject":    subject,
+			"html":       html,
+			"kind":       "weekly_digest",
+		})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, backendURL+"/internal/agents/notify", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if token, err := jwtFactory(); err == nil {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			return fmt.Errorf("notify backend status %d", resp.StatusCode)
+		}
+		return nil
+	}
+}
+
 func makeIngestTrigger(ragURL string, jwtFactory func() (string, error)) agentstore.IngestTrigger {
 	client := &http.Client{Timeout: 10 * time.Second}
 	return func(ctx context.Context, sourceID, profileID uuid.UUID) error {

@@ -3,6 +3,7 @@ package agentstore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/botjoker/sambacrm-business-tg/internal/storage"
@@ -43,6 +44,21 @@ func (r *DBRecorder) Record(ctx context.Context, m runtime.RecordedMessage) (uui
 	if err != nil {
 		return uuid.Nil, err
 	}
+
+	// Live-событие для админского SSE (B2): уведомляем на канал тенанта о новом
+	// сообщении. Best-effort — ошибка notify не должна ронять запись сообщения.
+	payload, _ := json.Marshal(map[string]any{
+		"type":            "message",
+		"conversation_id": m.ConversationID.String(),
+		"role":            m.Role,
+	})
+	if nerr := r.q.NotifyConvEvent(ctx, storage.NotifyConvEventParams{
+		Channel: fmt.Sprintf("agent_conv_event:%s", m.ProfileID.String()),
+		Payload: string(payload),
+	}); nerr != nil {
+		fmt.Printf("notify conv_event failed for %s: %v\n", m.ConversationID, nerr)
+	}
+
 	return fromUUID(row.ID), nil
 }
 

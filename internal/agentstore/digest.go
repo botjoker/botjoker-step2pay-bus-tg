@@ -14,15 +14,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// NotifyFunc отправляет письмо владельцу тенанта через backend
+// (POST /internal/agents/notify). profileID=получатель определяется бэкендом.
+type NotifyFunc func(ctx context.Context, profileID uuid.UUID, subject, html string) error
+
 // DigestService — еженедельный дайджест по тенанту (агрегаты + LLM-резюме).
 type DigestService struct {
-	q     *storage.Queries
-	cheap llm.LLMProvider
-	model string
+	q      *storage.Queries
+	cheap  llm.LLMProvider
+	model  string
+	notify NotifyFunc // опционально; если nil — email не отправляется
 }
 
-func NewDigestService(q *storage.Queries, cheap llm.LLMProvider, model string) *DigestService {
-	return &DigestService{q: q, cheap: cheap, model: model}
+func NewDigestService(q *storage.Queries, cheap llm.LLMProvider, model string, notify NotifyFunc) *DigestService {
+	return &DigestService{q: q, cheap: cheap, model: model, notify: notify}
 }
 
 const digestPrompt = `Сгенерируй еженедельный отчёт для бизнес-владельца по работе AI-агента.
@@ -115,14 +120,60 @@ func (s *DigestService) GenerateAndStore(ctx context.Context, profileID uuid.UUI
 	metricsJSON, _ := json.Marshal(metrics)
 	insightsJSON, _ := json.Marshal(map[string]any{"report": report})
 
-	return s.q.InsertDigest(ctx, storage.InsertDigestParams{
+	if err := s.q.InsertDigest(ctx, storage.InsertDigestParams{
 		ProfileID:   toUUID(profileID),
 		AgentID:     pgtype.UUID{}, // по всему тенанту
 		PeriodStart: pgtype.Date{Time: start, Valid: true},
 		PeriodEnd:   pgtype.Date{Time: end, Valid: true},
 		Metrics:     metricsJSON,
 		Insights:    insightsJSON,
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Email-сводка владельцу (best-effort: ошибка не роняет задачу Asynq).
+	if s.notify != nil {
+		subject := fmt.Sprintf("[SambaCRM] Еженедельный отчёт AI-агента (%s — %s)",
+			start.Format("02.01"), end.Format("02.01.2006"))
+		html := buildDigestHTML(start, end, len(rows), conversions, report,
+			topN(topicCount, 5), topN(tagCount, 5))
+		if err := s.notify(ctx, profileID, subject, html); err != nil {
+			// логировать, не падать
+			fmt.Printf("weekly digest email failed for %s: %v\n", profileID, err)
+		}
+	}
+	return nil
+}
+
+// buildDigestHTML собирает HTML-сводку дайджеста для письма владельцу.
+func buildDigestHTML(start, end time.Time, convs, conversions int, report string, topics, tags []string) string {
+	reportHTML := strings.ReplaceAll(htmlEscape(report), "\n", "<br>")
+	topicsLine := "—"
+	if len(topics) > 0 {
+		topicsLine = htmlEscape(strings.Join(topics, ", "))
+	}
+	tagsLine := "—"
+	if len(tags) > 0 {
+		tagsLine = htmlEscape(strings.Join(tags, ", "))
+	}
+	return fmt.Sprintf(`<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1a1a1a;max-width:560px;">
+<h2 style="font-size:18px;">Отчёт AI-агента за %s — %s</h2>
+<ul style="padding-left:20px;line-height:1.6;">
+<li>Диалогов с инсайтами: <b>%d</b></li>
+<li>Конверсий: <b>%d</b></li>
+<li>Топ-темы: %s</li>
+<li>Топ-теги: %s</li>
+</ul>
+<div style="margin-top:16px;padding:16px;background:#f9fafb;border-radius:8px;line-height:1.6;">%s</div>
+</div>`,
+		start.Format("02.01"), end.Format("02.01.2006"),
+		convs, conversions, topicsLine, tagsLine, reportHTML)
+}
+
+// htmlEscape — минимальное экранирование для подстановки в письмо.
+func htmlEscape(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
+	return r.Replace(s)
 }
 
 func topN(m map[string]int, n int) []string {

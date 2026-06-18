@@ -1403,6 +1403,21 @@ func (q *Queries) MarkEscalated(ctx context.Context, arg MarkEscalatedParams) er
 	return err
 }
 
+const notifyConvEvent = `-- name: NotifyConvEvent :exec
+SELECT pg_notify($1::text, $2::text)
+`
+
+type NotifyConvEventParams struct {
+	Channel string `json:"channel"`
+	Payload string `json:"payload"`
+}
+
+// Live-событие для админского SSE (канал agent_conv_event:{profile_id}).
+func (q *Queries) NotifyConvEvent(ctx context.Context, arg NotifyConvEventParams) error {
+	_, err := q.db.Exec(ctx, notifyConvEvent, arg.Channel, arg.Payload)
+	return err
+}
+
 const supersedeFact = `-- name: SupersedeFact :exec
 UPDATE agent_conversation_facts
 SET superseded_by = $2

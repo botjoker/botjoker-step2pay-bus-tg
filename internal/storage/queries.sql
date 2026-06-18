@@ -134,6 +134,10 @@ INSERT INTO agent_messages (
 )
 RETURNING *;
 
+-- name: NotifyConvEvent :exec
+-- Live-событие для админского SSE (канал agent_conv_event:{profile_id}).
+SELECT pg_notify(sqlc.arg(channel)::text, sqlc.arg(payload)::text);
+
 -- name: ListMessagesByConversation :many
 SELECT * FROM agent_messages
 WHERE conversation_id = $1
