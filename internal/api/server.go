@@ -124,7 +124,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleWidgetJS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	// Бутстрап-скрипт виджета: ревалидируем каждый раз, чтобы фиксы (напр.
+	// персистентный external_user_id) доезжали клиентам сразу, а не через час кэша.
+	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(widgetJS)
 }
