@@ -17,9 +17,10 @@ type OperatorMessage struct {
 }
 
 // TransportSender — отправка сообщения в конкретный канал. Реализуется каждым
-// транспортом в Phase 6 (telegram/vk/web).
+// транспортом (telegram/vk/web). convID нужен web-транспорту (доставка по SSE-каналу
+// диалога); telegram/vk адресуют по channelID+externalUserID и convID игнорируют.
 type TransportSender interface {
-	SendToConversation(ctx context.Context, channelID uuid.UUID, externalUserID, text string) error
+	SendToConversation(ctx context.Context, convID, channelID uuid.UUID, externalUserID, text string) error
 }
 
 // ConvRoute — куда слать: тип канала + идентификаторы получателя.
@@ -35,21 +36,20 @@ type ConvResolver interface {
 	Resolve(ctx context.Context, convID uuid.UUID) (ConvRoute, error)
 }
 
-// OperatorProxy пересылает операторские сообщения в нужный транспорт и пишет их
-// в историю (role=operator).
+// OperatorProxy пересылает операторские сообщения в нужный транспорт.
+// Запись в историю (role=operator) делает backend (он владелец БД agent_messages),
+// поэтому прокси сам в историю НЕ пишет — иначе сообщение дублировалось бы.
 type OperatorProxy struct {
 	mu         sync.RWMutex
 	transports map[string]TransportSender
 	resolver   ConvResolver
-	recorder   MessageRecorder
 }
 
-// NewOperatorProxy создаёт прокси. recorder/resolver обязательны для реальной работы.
-func NewOperatorProxy(resolver ConvResolver, recorder MessageRecorder) *OperatorProxy {
+// NewOperatorProxy создаёт прокси. resolver обязателен для реальной работы.
+func NewOperatorProxy(resolver ConvResolver) *OperatorProxy {
 	return &OperatorProxy{
 		transports: map[string]TransportSender{},
 		resolver:   resolver,
-		recorder:   recorder,
 	}
 }
 
@@ -81,18 +81,5 @@ func (p *OperatorProxy) Handle(ctx context.Context, op OperatorMessage) error {
 	if op.Mode == "open" {
 		text = "Оператор: " + op.Text
 	}
-	if err := sender.SendToConversation(ctx, route.ChannelID, route.ExternalUserID, text); err != nil {
-		return err
-	}
-
-	if p.recorder != nil {
-		_, _ = p.recorder.Record(ctx, RecordedMessage{
-			ConversationID:    op.ConversationID,
-			ProfileID:         route.ProfileID,
-			Role:              "operator",
-			Content:           op.Text,
-			OperatorAccountID: op.OperatorAccountID,
-		})
-	}
-	return nil
+	return sender.SendToConversation(ctx, op.ConversationID, route.ChannelID, route.ExternalUserID, text)
 }

@@ -22,6 +22,24 @@
   // apiBase: data-api или хост, с которого загружен сам скрипт.
   var apiBase = script.dataset.api || new URL(script.src).origin;
 
+  // Стабильный идентификатор посетителя — чтобы при перезагрузке страницы диалог
+  // продолжался тем же (сервер делает find-or-create по external_user_id), а оператор/
+  // админка видели один непрерывный диалог. В приватном режиме localStorage может
+  // бросать — тогда работаем без персистентности (новый id на сессию).
+  var STORE_KEY = "scw:uid:" + agentSlug;
+  function getUID() {
+    try {
+      var v = localStorage.getItem(STORE_KEY);
+      if (v) return v;
+      var nv = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : "u-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+      localStorage.setItem(STORE_KEY, nv);
+      return nv;
+    } catch (_) { return null; }
+  }
+  var uid = getUID();
+
   var state = { open: false, token: null, streaming: false, messages: [], es: null };
 
   var root = document.createElement("div");
@@ -36,7 +54,13 @@
   bubble.className = "scw-bubble";
   bubble.setAttribute("aria-label", "Открыть чат");
   bubble.textContent = "💬";
-  bubble.onclick = function () { state.open = !state.open; render(); };
+  bubble.onclick = function () {
+    state.open = !state.open;
+    // При открытии подключаем SSE заранее: оператор сможет написать клиенту даже
+    // до того, как тот отправит первое сообщение (find-or-create диалога по uid).
+    if (state.open) ensureSession();
+    render();
+  };
   shadow.appendChild(bubble);
 
   var win = document.createElement("div");
@@ -72,7 +96,10 @@
     }
     for (var i = 0; i < state.messages.length; i++) {
       var m = state.messages[i];
-      html += '<div class="scw-msg ' + (m.role === "user" ? "scw-user" : "scw-ai") + '">' + esc(m.content) + "</div>";
+      var cls = m.role === "user" ? "scw-user" : "scw-ai";
+      var pre = "";
+      if (m.role === "operator") { cls = "scw-ai scw-op"; pre = '<span class="scw-op-tag">Оператор</span>'; }
+      html += '<div class="scw-msg ' + cls + '">' + pre + esc(m.content) + "</div>";
     }
     box.innerHTML = html;
     box.scrollTop = box.scrollHeight;
@@ -99,7 +126,7 @@
     return fetch(apiBase + "/chat/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent_slug: agentSlug, consent_granted: true })
+      body: JSON.stringify({ agent_slug: agentSlug, external_user_id: uid || "", consent_granted: true })
     })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
@@ -118,6 +145,11 @@
         if (ev.type === "text" && ev.text) {
           var last = state.messages[state.messages.length - 1];
           if (last && last.role === "assistant") { last.content += ev.text; renderMessages(); }
+        } else if (ev.type === "operator" && ev.text) {
+          // Сообщение живого оператора (live takeover) — отдельным пузырём.
+          state.messages.push({ role: "operator", content: ev.text });
+          state.streaming = false;
+          renderMessages();
         } else if (ev.type === "done" || ev.type === "error") {
           state.streaming = false;
         }
@@ -144,6 +176,8 @@
       ".scw-msg{margin-bottom:8px;padding:8px 12px;border-radius:12px;max-width:80%;word-wrap:break-word;white-space:pre-wrap}" +
       ".scw-user{background:" + c + ";color:#fff;margin-left:auto}" +
       ".scw-ai{background:#f3f4f6}" +
+      ".scw-op{border-left:3px solid " + c + "}" +
+      ".scw-op-tag{display:block;font-size:11px;font-weight:600;color:" + c + ";margin-bottom:2px}" +
       ".scw-row{display:flex;padding:12px;border-top:1px solid #e5e7eb;gap:8px}" +
       ".scw-row input{flex:1;border:1px solid #d1d5db;border-radius:6px;padding:8px}" +
       ".scw-row button{background:" + c + ";color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer}"

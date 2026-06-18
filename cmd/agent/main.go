@@ -78,7 +78,7 @@ func main() {
 	toolReg := agentstore.NewToolRegistry(queries, remote)
 	billing := runtime.NewBillingTracker(backendURL, jwtFactory)
 	piiClient := pii.New(os.Getenv("PII_SVC_URL"))
-	opProxy := runtime.NewOperatorProxy(resolver, recorder)
+	opProxy := runtime.NewOperatorProxy(resolver)
 
 	deps := []runtime.AgentOption{
 		runtime.WithRecorder(recorder),
@@ -162,6 +162,10 @@ func main() {
 		slog.Warn("list vk channels failed", "err", err)
 	}
 	opProxy.Register("vk", vkManager)
+
+	// Web-виджет: операторские сообщения доставляются через SSE (тот же хаб, что и
+	// события агента). Без Redis web-доставка вернёт ошибку (как и сам SSE-чат).
+	opProxy.Register("web", api.NewWebSender(sink))
 
 	// Insights pipeline (092) + weekly digest (093): дешёвая модель + Asynq.
 	if cheap, err := buildProvider(envOr("INSIGHTS_PROVIDER", "yandex_gpt"), envOr("INSIGHTS_MODEL", "yandexgpt-lite")); err == nil {

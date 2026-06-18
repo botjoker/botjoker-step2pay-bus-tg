@@ -83,7 +83,8 @@ func (m *Manager) Count() int {
 }
 
 // SendToConversation реализует runtime.TransportSender (для live takeover).
-func (m *Manager) SendToConversation(ctx context.Context, channelID uuid.UUID, externalUserID, text string) error {
+// convID не нужен: VK адресует по channelID + externalUserID (peer id).
+func (m *Manager) SendToConversation(ctx context.Context, _ uuid.UUID, channelID uuid.UUID, externalUserID, text string) error {
 	ch, ok := m.get(channelID)
 	if !ok {
 		return fmt.Errorf("vk: channel %s not running", channelID)

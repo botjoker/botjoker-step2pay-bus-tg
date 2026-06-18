@@ -85,7 +85,8 @@ func (m *Manager) Count() int {
 }
 
 // SendToConversation реализует runtime.TransportSender (для live takeover).
-func (m *Manager) SendToConversation(_ context.Context, channelID uuid.UUID, externalUserID, text string) error {
+// convID не нужен: Telegram адресует по channelID + externalUserID (chat id).
+func (m *Manager) SendToConversation(_ context.Context, _ uuid.UUID, channelID uuid.UUID, externalUserID, text string) error {
 	ref, ok := m.get(channelID)
 	if !ok {
 		return fmt.Errorf("telegram: channel %s not running", channelID)
