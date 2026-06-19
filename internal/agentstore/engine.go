@@ -30,18 +30,30 @@ type IngestTrigger func(ctx context.Context, sourceID, profileID uuid.UUID) erro
 
 // Engine — sqlc/runtime-backed реализация api.Engine.
 type Engine struct {
-	q        *storage.Queries
-	sink     EventSink
-	factory  ProviderFactory
-	ingest   IngestTrigger
-	opProxy  *runtime.OperatorProxy
-	deps     []runtime.AgentOption // общие зависимости (recorder/memory/intake/tools/...)
+	q       *storage.Queries
+	sink    EventSink
+	factory ProviderFactory
+	ingest  IngestTrigger
+	opProxy *runtime.OperatorProxy
+	deps    []runtime.AgentOption // общие зависимости (recorder/memory/intake/tools/...)
 
-	secretsKey string // AGENT_SECRETS_KEY для расшифровки токенов каналов
+	secretsKey string                                      // AGENT_SECRETS_KEY для расшифровки токенов каналов
+	postTurn   func(ctx context.Context, convID uuid.UUID) // дебаунс-триггер insights после хода
 }
 
 // SetSecretsKey задаёт AGENT_SECRETS_KEY для расшифровки токенов каналов.
 func (e *Engine) SetSecretsKey(key string) { e.secretsKey = key }
+
+// SetPostTurn регистрирует колбэк, вызываемый после завершения хода реального
+// диалога (не playground). Используется для дебаунс-постановки insights-задачи.
+func (e *Engine) SetPostTurn(fn func(ctx context.Context, convID uuid.UUID)) { e.postTurn = fn }
+
+// firePostTurn безопасно вызывает postTurn-колбэк, если он задан.
+func (e *Engine) firePostTurn(ctx context.Context, convID uuid.UUID) {
+	if e.postTurn != nil {
+		e.postTurn(ctx, convID)
+	}
+}
 
 // NewEngine собирает движок. deps — общие AgentOption (recorder, memory, intake,
 // takeover, billing, tools, pii, rag), которые применяются к каждому агенту.
@@ -97,6 +109,7 @@ func (e *Engine) HandleMessage(ctx context.Context, conversationID uuid.UUID, te
 	for ev := range events {
 		e.publish(ctx, conversationID, ev)
 	}
+	e.firePostTurn(ctx, conversationID)
 	return nil
 }
 
@@ -148,7 +161,24 @@ func (e *Engine) RunConversation(ctx context.Context, convID uuid.UUID, text str
 	if err != nil {
 		return nil, err
 	}
-	return agent.Run(ctx, runtime.RunRequest{ConversationID: convID, UserMessage: text, Attachments: attachments})
+	raw, err := agent.Run(ctx, runtime.RunRequest{ConversationID: convID, UserMessage: text, Attachments: attachments})
+	if err != nil {
+		return nil, err
+	}
+	if e.postTurn == nil {
+		return raw, nil
+	}
+	// Прокладка: форвардим события и по завершении хода дёргаем postTurn-триггер.
+	// Контекст хода может отмениться после стрима — для триггера берём фоновый.
+	out := make(chan llm.StreamEvent, 32)
+	go func() {
+		defer close(out)
+		for ev := range raw {
+			out <- ev
+		}
+		e.firePostTurn(context.Background(), convID)
+	}()
+	return out, nil
 }
 
 // ChannelInfo — канал транспорта с расшифрованным токеном.

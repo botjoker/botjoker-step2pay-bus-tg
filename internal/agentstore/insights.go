@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
@@ -38,10 +39,7 @@ const insightsPrompt = `Проанализируй диалог между AI-а
   "next_step_suggestion": "",
   "converted": false,
   "conversion_tool": ""
-}
-
-Диалог:
-%s`
+}`
 
 type insightsJSON struct {
 	Tags                []string          `json:"tags"`
@@ -56,7 +54,11 @@ type insightsJSON struct {
 	NextStepSuggestion  string            `json:"next_step_suggestion"`
 	Converted           *bool             `json:"converted"`
 	ConversionTool      string            `json:"conversion_tool"`
+	IntakeExtracted     map[string]string `json:"intake_extracted"`
 }
+
+// contactFactKeys — ключи контакта, которые из contact_extracted пишутся в факты.
+var contactFactKeys = []string{"name", "phone", "email"}
 
 // DueConversations возвращает диалоги, которым пора посчитать insights.
 func (s *InsightsService) DueConversations(ctx context.Context, limit int32) ([]uuid.UUID, error) {
@@ -97,9 +99,30 @@ func (s *InsightsService) Process(ctx context.Context, convID uuid.UUID) error {
 		b.WriteString("\n")
 	}
 
+	// Схема опросника агента — чтобы дешёвая модель извлекла и значения полей,
+	// а не только контакт (на deepseek inline record_intake_fact ненадёжен).
+	fields, _ := s.q.ListIntakeFields(ctx, conv.AgentID)
+
+	var pb strings.Builder
+	pb.WriteString(insightsPrompt)
+	if len(fields) > 0 {
+		pb.WriteString("\n\nТакже извлеки значения полей опросника, если они явно упомянуты в диалоге. ")
+		pb.WriteString(`Добавь в JSON ключ "intake_extracted" — объект {field_key: значение}; `)
+		pb.WriteString("включай только распознанные поля, без догадок. Поля опросника:\n")
+		for _, f := range fields {
+			pb.WriteString("- ")
+			pb.WriteString(f.FieldKey)
+			pb.WriteString(" — ")
+			pb.WriteString(f.FieldLabel)
+			pb.WriteString("\n")
+		}
+	}
+	pb.WriteString("\nДиалог:\n")
+	pb.WriteString(b.String())
+
 	res, err := s.cheap.Complete(ctx, llm.CompleteRequest{
 		Model:       s.model,
-		Messages:    []llm.Message{{Role: llm.RoleUser, Content: fmt.Sprintf(insightsPrompt, b.String())}},
+		Messages:    []llm.Message{{Role: llm.RoleUser, Content: pb.String()}},
 		JSONMode:    true,
 		Temperature: 0.1,
 		MaxTokens:   1500,
@@ -115,7 +138,7 @@ func (s *InsightsService) Process(ctx context.Context, convID uuid.UUID) error {
 
 	contactJSON := marshalJSON(ins.ContactExtracted)
 
-	return s.q.UpsertInsights(ctx, storage.UpsertInsightsParams{
+	if err := s.q.UpsertInsights(ctx, storage.UpsertInsightsParams{
 		ProfileID:           conv.ProfileID,
 		ConversationID:      toUUID(convID),
 		Tags:                ins.Tags,
@@ -131,7 +154,167 @@ func (s *InsightsService) Process(ctx context.Context, convID uuid.UUID) error {
 		Converted:           toNullBool(ins.Converted),
 		ConversionTool:      toText(ins.ConversionTool),
 		LlmModel:            toText(s.model),
+	}); err != nil {
+		return err
+	}
+
+	// Сбор фактов из извлечённого: контакт + распознанные поля опросника.
+	// Best-effort: ошибка записи фактов не валит задачу insights.
+	if err := s.writeFacts(ctx, conv, fields, ins); err != nil {
+		slog.Warn("insights: write facts failed", "conversation", convID, "err", err)
+	}
+
+	// Авто-правило воронки (ЭТАП D2): «горячий» диалог → лид (если включено у агента).
+	if err := s.maybeAutoCreateLead(ctx, conv, ins); err != nil {
+		slog.Warn("insights: auto-create lead failed", "conversation", convID, "err", err)
+	}
+	return nil
+}
+
+// maybeAutoCreateLead заводит лид из диалога, если у агента включён auto_create_lead
+// и диалог «горячий» (есть телефон ИЛИ primary_intent=purchase_intent) и лид ещё не
+// привязан. Дедуп по телефону: привязывает диалог к существующему открытому лиду.
+func (s *InsightsService) maybeAutoCreateLead(ctx context.Context, conv storage.AgentConversation, ins insightsJSON) error {
+	auto, err := s.q.GetAgentAutoCreateLead(ctx, conv.AgentID)
+	if err != nil || !auto {
+		return err
+	}
+	if conv.LeadID.Valid {
+		return nil // уже привязан
+	}
+
+	// «горячий» = есть телефон ИЛИ покупательский интент.
+	phone := strings.TrimSpace(ins.ContactExtracted["phone"])
+	if phone == "" && ins.PrimaryIntent != "purchase_intent" {
+		return nil
+	}
+
+	// Дедуп: при наличии телефона привязываем к существующему открытому лиду.
+	if phone != "" {
+		existing, derr := s.q.FindOpenLeadByPhone(ctx, storage.FindOpenLeadByPhoneParams{
+			ProfileID:    conv.ProfileID,
+			ContactPhone: toText(phone),
+		})
+		if derr == nil && existing.Valid {
+			return s.q.SetConversationLead(ctx, storage.SetConversationLeadParams{
+				ID: conv.ID, LeadID: existing,
+			})
+		}
+	}
+
+	stageID, serr := s.q.GetLeadStartStage(ctx, conv.ProfileID)
+	if serr != nil || !stageID.Valid {
+		return serr
+	}
+
+	// data + контакт из активных фактов.
+	facts, _ := s.q.ListConversationFacts(ctx, conv.ID)
+	data := map[string]json.RawMessage{}
+	var name, email string
+	for _, f := range facts {
+		if len(f.FieldValue) > 0 {
+			data[f.FieldKey] = json.RawMessage(f.FieldValue)
+		}
+		switch f.FieldKey {
+		case "name":
+			name = jsonbToString(f.FieldValue)
+		case "email":
+			email = jsonbToString(f.FieldValue)
+		case "phone":
+			if phone == "" {
+				phone = jsonbToString(f.FieldValue)
+			}
+		}
+	}
+	dataJSON, _ := json.Marshal(data)
+
+	leadID, ierr := s.q.InsertLeadAuto(ctx, storage.InsertLeadAutoParams{
+		ProfileID:            conv.ProfileID,
+		StageID:              stageID,
+		Title:                toText(name),
+		ContactName:          toText(name),
+		ContactPhone:         toText(phone),
+		ContactEmail:         toText(email),
+		SourceAgentID:        conv.AgentID,
+		SourceConversationID: conv.ID,
+		Data:                 dataJSON,
+		Summary:              toText(ins.ShortSummary),
+		Sentiment:            toText(ins.Sentiment),
+		PrimaryIntent:        toText(ins.PrimaryIntent),
 	})
+	if ierr != nil {
+		return ierr
+	}
+	return s.q.SetConversationLead(ctx, storage.SetConversationLeadParams{ID: conv.ID, LeadID: leadID})
+}
+
+// writeFacts апсертит факты диалога из результатов insights (контакт + поля
+// опросника), не перезаписывая подтверждённые пользователем (is_verified) и
+// неизменившиеся значения. Та же дедупликация активного факта, что у тул-колла.
+func (s *InsightsService) writeFacts(ctx context.Context, conv storage.AgentConversation, fields []storage.AgentIntakeField, ins insightsJSON) error {
+	candidates := map[string]string{}
+	for _, k := range contactFactKeys {
+		if v := strings.TrimSpace(ins.ContactExtracted[k]); v != "" {
+			candidates[k] = v
+		}
+	}
+	for k, v := range ins.IntakeExtracted {
+		if k = strings.TrimSpace(k); k == "" {
+			continue
+		}
+		if v = strings.TrimSpace(v); v != "" {
+			candidates[k] = v
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Активные факты диалога — чтобы не трогать verified и не дублировать значение.
+	active := map[string]storage.AgentConversationFact{}
+	if existing, err := s.q.ListConversationFacts(ctx, conv.ID); err == nil {
+		for _, f := range existing {
+			active[f.FieldKey] = f
+		}
+	}
+	// field_key → intake_field_id (NULL для контактных полей вне схемы).
+	fieldID := map[string]pgtype.UUID{}
+	for _, f := range fields {
+		fieldID[f.FieldKey] = f.ID
+	}
+
+	for key, val := range candidates {
+		if ex, ok := active[key]; ok {
+			if ex.IsVerified.Bool {
+				continue // не перезаписываем подтверждённое пользователем
+			}
+			if jsonbToString(ex.FieldValue) == val {
+				continue // значение не изменилось
+			}
+		}
+		valueJSON, err := json.Marshal(val)
+		if err != nil {
+			continue
+		}
+		if err := s.q.DeactivateActiveFact(ctx, storage.DeactivateActiveFactParams{
+			ConversationID: conv.ID,
+			FieldKey:       key,
+		}); err != nil {
+			return err
+		}
+		if _, err := s.q.InsertConversationFact(ctx, storage.InsertConversationFactParams{
+			ProfileID:      conv.ProfileID,
+			ConversationID: conv.ID,
+			IntakeFieldID:  fieldID[key],
+			FieldKey:       key,
+			FieldValue:     valueJSON,
+			Confidence:     toNumeric(0.7),
+			SourceExcerpt:  toText("auto (insights)"),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func toNullBool(b *bool) pgtype.Bool {

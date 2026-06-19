@@ -56,6 +56,7 @@ type Agent struct {
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 	CreatedBy                pgtype.UUID        `json:"created_by"`
 	UpdatedBy                pgtype.UUID        `json:"updated_by"`
+	AutoCreateLead           bool               `json:"auto_create_lead"`
 }
 
 type AgentBillingUsage struct {
@@ -153,6 +154,7 @@ type AgentConversation struct {
 	IsActive         bool               `json:"is_active"`
 	LastMessageAt    pgtype.Timestamptz `json:"last_message_at"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	LeadID           pgtype.UUID        `json:"lead_id"`
 }
 
 type AgentConversationFact struct {
@@ -1647,6 +1649,46 @@ type JudgeCertification struct {
 	DocumentMediaID pgtype.UUID        `json:"document_media_id"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Lead struct {
+	ID                   pgtype.UUID        `json:"id"`
+	ProfileID            pgtype.UUID        `json:"profile_id"`
+	StageID              pgtype.UUID        `json:"stage_id"`
+	Title                pgtype.Text        `json:"title"`
+	ContactName          pgtype.Text        `json:"contact_name"`
+	ContactPhone         pgtype.Text        `json:"contact_phone"`
+	ContactEmail         pgtype.Text        `json:"contact_email"`
+	Source               string             `json:"source"`
+	SourceAgentID        pgtype.UUID        `json:"source_agent_id"`
+	SourceConversationID pgtype.UUID        `json:"source_conversation_id"`
+	CustomerID           pgtype.UUID        `json:"customer_id"`
+	Data                 []byte             `json:"data"`
+	Summary              pgtype.Text        `json:"summary"`
+	Sentiment            pgtype.Text        `json:"sentiment"`
+	PrimaryIntent        pgtype.Text        `json:"primary_intent"`
+	ValueAmount          pgtype.Numeric     `json:"value_amount"`
+	Currency             string             `json:"currency"`
+	SortOrder            int32              `json:"sort_order"`
+	AssignedTo           pgtype.UUID        `json:"assigned_to"`
+	IsDeleted            bool               `json:"is_deleted"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	UpdatedBy            pgtype.UUID        `json:"updated_by"`
+}
+
+type LeadStage struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProfileID pgtype.UUID        `json:"profile_id"`
+	Name      string             `json:"name"`
+	SortOrder int32              `json:"sort_order"`
+	Color     pgtype.Text        `json:"color"`
+	IsWon     bool               `json:"is_won"`
+	IsLost    bool               `json:"is_lost"`
+	IsDeleted bool               `json:"is_deleted"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Match struct {

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -176,7 +177,7 @@ func main() {
 		model := envOr("INSIGHTS_MODEL", "yandexgpt-lite")
 		insightsSvc := agentstore.NewInsightsService(queries, cheap, model)
 		digestSvc := agentstore.NewDigestService(queries, cheap, model, makeNotifier(backendURL, jwtFactory))
-		startInsights(ctx, insightsSvc, digestSvc)
+		startInsights(ctx, insightsSvc, digestSvc, engine)
 	} else {
 		slog.Warn("insights disabled (provider build failed)", "err", err)
 	}
@@ -206,12 +207,28 @@ func main() {
 }
 
 // startInsights запускает Asynq-воркеры (insights + weekly digest) и планировщики.
-func startInsights(ctx context.Context, insights *agentstore.InsightsService, digest *agentstore.DigestService) {
+func startInsights(ctx context.Context, insights *agentstore.InsightsService, digest *agentstore.DigestService, engine *agentstore.Engine) {
 	client, err := queue.NewAsynqClient()
 	if err != nil {
 		slog.Warn("insights: asynq client unavailable", "err", err)
 		return
 	}
+
+	// Пост-анализ сразу после хода (с дебаунсом), а не только по 30-мин расписанию.
+	// TaskID=convID + ProcessIn схлопывают серию сообщений в один прогон на окно.
+	engine.SetPostTurn(func(_ context.Context, convID uuid.UUID) {
+		task, terr := queue.NewInsightsTask(convID)
+		if terr != nil {
+			return
+		}
+		_, eerr := client.Enqueue(task,
+			asynq.TaskID("insights:"+convID.String()),
+			asynq.ProcessIn(90*time.Second),
+		)
+		if eerr != nil && !errors.Is(eerr, asynq.ErrTaskIDConflict) && !errors.Is(eerr, asynq.ErrDuplicateTask) {
+			slog.Warn("insights: post-turn enqueue failed", "conversation", convID, "err", eerr)
+		}
+	})
 	srv, err := queue.NewAsynqServer()
 	if err != nil {
 		slog.Warn("insights: asynq server unavailable", "err", err)

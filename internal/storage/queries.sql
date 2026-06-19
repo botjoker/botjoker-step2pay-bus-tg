@@ -339,3 +339,39 @@ WHERE conversation_id = sqlc.arg(conversation_id)
   AND created_at < sqlc.arg(before)
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- ============================================================
+-- LEADS AUTO-RULE (ЭТАП D2) — авто-создание лида из «горячего» диалога
+-- ============================================================
+
+-- name: GetAgentAutoCreateLead :one
+SELECT auto_create_lead FROM agents WHERE id = $1;
+
+-- name: GetLeadStartStage :one
+-- Стартовая стадия тенанта (минимальный sort_order, не won/lost).
+SELECT id FROM lead_stages
+WHERE profile_id = $1 AND is_deleted = false AND is_won = false AND is_lost = false
+ORDER BY sort_order LIMIT 1;
+
+-- name: FindOpenLeadByPhone :one
+-- Открытый (не won/lost) лид с таким телефоном — для мягкого дедупа.
+SELECT l.id FROM leads l
+WHERE l.profile_id = $1 AND l.is_deleted = false AND l.contact_phone = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM lead_stages s
+    WHERE s.id = l.stage_id AND (s.is_won = true OR s.is_lost = true)
+  )
+ORDER BY l.created_at DESC LIMIT 1;
+
+-- name: InsertLeadAuto :one
+INSERT INTO leads
+  (profile_id, stage_id, title, contact_name, contact_phone, contact_email,
+   source, source_agent_id, source_conversation_id, data, summary, sentiment,
+   primary_intent, sort_order)
+VALUES ($1, $2, $3, $4, $5, $6, 'agent', $7, $8, $9, $10, $11, $12,
+   COALESCE((SELECT MAX(sort_order) + 1 FROM leads
+             WHERE profile_id = $1 AND stage_id = $2 AND is_deleted = false), 0))
+RETURNING id;
+
+-- name: SetConversationLead :exec
+UPDATE agent_conversations SET lead_id = $2 WHERE id = $1;

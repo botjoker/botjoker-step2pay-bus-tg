@@ -86,7 +86,7 @@ const createAgentConversation = `-- name: CreateAgentConversation :one
 INSERT INTO agent_conversations
   (profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id, title, summary, context, is_escalated, escalated_at, escalation_reason, is_active, last_message_at, created_at
+RETURNING id, profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id, title, summary, context, is_escalated, escalated_at, escalation_reason, is_active, last_message_at, created_at, lead_id
 `
 
 type CreateAgentConversationParams struct {
@@ -125,6 +125,7 @@ func (q *Queries) CreateAgentConversation(ctx context.Context, arg CreateAgentCo
 		&i.IsActive,
 		&i.LastMessageAt,
 		&i.CreatedAt,
+		&i.LeadID,
 	)
 	return i, err
 }
@@ -156,6 +157,29 @@ WHERE id = $1
 func (q *Queries) EndTakeover(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, endTakeover, id)
 	return err
+}
+
+const findOpenLeadByPhone = `-- name: FindOpenLeadByPhone :one
+SELECT l.id FROM leads l
+WHERE l.profile_id = $1 AND l.is_deleted = false AND l.contact_phone = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM lead_stages s
+    WHERE s.id = l.stage_id AND (s.is_won = true OR s.is_lost = true)
+  )
+ORDER BY l.created_at DESC LIMIT 1
+`
+
+type FindOpenLeadByPhoneParams struct {
+	ProfileID    pgtype.UUID `json:"profile_id"`
+	ContactPhone pgtype.Text `json:"contact_phone"`
+}
+
+// Открытый (не won/lost) лид с таким телефоном — для мягкого дедупа.
+func (q *Queries) FindOpenLeadByPhone(ctx context.Context, arg FindOpenLeadByPhoneParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, findOpenLeadByPhone, arg.ProfileID, arg.ContactPhone)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getActiveTakeover = `-- name: GetActiveTakeover :one
@@ -302,6 +326,21 @@ func (q *Queries) GetAgent(ctx context.Context, id pgtype.UUID) (GetAgentRow, er
 	return i, err
 }
 
+const getAgentAutoCreateLead = `-- name: GetAgentAutoCreateLead :one
+
+SELECT auto_create_lead FROM agents WHERE id = $1
+`
+
+// ============================================================
+// LEADS AUTO-RULE (ЭТАП D2) — авто-создание лида из «горячего» диалога
+// ============================================================
+func (q *Queries) GetAgentAutoCreateLead(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, getAgentAutoCreateLead, id)
+	var auto_create_lead bool
+	err := row.Scan(&auto_create_lead)
+	return auto_create_lead, err
+}
+
 const getAgentBySlug = `-- name: GetAgentBySlug :one
 SELECT id, profile_id, slug, name, description, avatar_media_id,
        persona, greeting_message, fallback_message, safety_disclaimer,
@@ -425,7 +464,7 @@ func (q *Queries) GetAgentBySlug(ctx context.Context, arg GetAgentBySlugParams) 
 
 const getAgentConversation = `-- name: GetAgentConversation :one
 
-SELECT id, profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id, title, summary, context, is_escalated, escalated_at, escalation_reason, is_active, last_message_at, created_at FROM agent_conversations WHERE id = $1
+SELECT id, profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id, title, summary, context, is_escalated, escalated_at, escalation_reason, is_active, last_message_at, created_at, lead_id FROM agent_conversations WHERE id = $1
 `
 
 // ============================================================
@@ -453,12 +492,13 @@ func (q *Queries) GetAgentConversation(ctx context.Context, id pgtype.UUID) (Age
 		&i.IsActive,
 		&i.LastMessageAt,
 		&i.CreatedAt,
+		&i.LeadID,
 	)
 	return i, err
 }
 
 const getAgentConversationByExternal = `-- name: GetAgentConversationByExternal :one
-SELECT id, profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id, title, summary, context, is_escalated, escalated_at, escalation_reason, is_active, last_message_at, created_at FROM agent_conversations
+SELECT id, profile_id, agent_id, channel_id, external_user_id, external_chat_id, customer_id, title, summary, context, is_escalated, escalated_at, escalation_reason, is_active, last_message_at, created_at, lead_id FROM agent_conversations
 WHERE agent_id = $1 AND channel_id = $2 AND external_user_id = $3 AND is_active = true
 LIMIT 1
 `
@@ -489,6 +529,7 @@ func (q *Queries) GetAgentConversationByExternal(ctx context.Context, arg GetAge
 		&i.IsActive,
 		&i.LastMessageAt,
 		&i.CreatedAt,
+		&i.LeadID,
 	)
 	return i, err
 }
@@ -691,6 +732,20 @@ func (q *Queries) GetKnowledgeSource(ctx context.Context, id pgtype.UUID) (Agent
 	return i, err
 }
 
+const getLeadStartStage = `-- name: GetLeadStartStage :one
+SELECT id FROM lead_stages
+WHERE profile_id = $1 AND is_deleted = false AND is_won = false AND is_lost = false
+ORDER BY sort_order LIMIT 1
+`
+
+// Стартовая стадия тенанта (минимальный sort_order, не won/lost).
+func (q *Queries) GetLeadStartStage(ctx context.Context, profileID pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getLeadStartStage, profileID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getMessageBrief = `-- name: GetMessageBrief :one
 SELECT content, conversation_id, created_at
 FROM agent_messages WHERE id = $1
@@ -845,6 +900,52 @@ func (q *Queries) InsertDigest(ctx context.Context, arg InsertDigestParams) erro
 		arg.Insights,
 	)
 	return err
+}
+
+const insertLeadAuto = `-- name: InsertLeadAuto :one
+INSERT INTO leads
+  (profile_id, stage_id, title, contact_name, contact_phone, contact_email,
+   source, source_agent_id, source_conversation_id, data, summary, sentiment,
+   primary_intent, sort_order)
+VALUES ($1, $2, $3, $4, $5, $6, 'agent', $7, $8, $9, $10, $11, $12,
+   COALESCE((SELECT MAX(sort_order) + 1 FROM leads
+             WHERE profile_id = $1 AND stage_id = $2 AND is_deleted = false), 0))
+RETURNING id
+`
+
+type InsertLeadAutoParams struct {
+	ProfileID            pgtype.UUID `json:"profile_id"`
+	StageID              pgtype.UUID `json:"stage_id"`
+	Title                pgtype.Text `json:"title"`
+	ContactName          pgtype.Text `json:"contact_name"`
+	ContactPhone         pgtype.Text `json:"contact_phone"`
+	ContactEmail         pgtype.Text `json:"contact_email"`
+	SourceAgentID        pgtype.UUID `json:"source_agent_id"`
+	SourceConversationID pgtype.UUID `json:"source_conversation_id"`
+	Data                 []byte      `json:"data"`
+	Summary              pgtype.Text `json:"summary"`
+	Sentiment            pgtype.Text `json:"sentiment"`
+	PrimaryIntent        pgtype.Text `json:"primary_intent"`
+}
+
+func (q *Queries) InsertLeadAuto(ctx context.Context, arg InsertLeadAutoParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, insertLeadAuto,
+		arg.ProfileID,
+		arg.StageID,
+		arg.Title,
+		arg.ContactName,
+		arg.ContactPhone,
+		arg.ContactEmail,
+		arg.SourceAgentID,
+		arg.SourceConversationID,
+		arg.Data,
+		arg.Summary,
+		arg.Sentiment,
+		arg.PrimaryIntent,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertMessage = `-- name: InsertMessage :one
@@ -1519,6 +1620,20 @@ type NotifyConvEventParams struct {
 // Live-событие для админского SSE (канал agent_conv_event:{profile_id}).
 func (q *Queries) NotifyConvEvent(ctx context.Context, arg NotifyConvEventParams) error {
 	_, err := q.db.Exec(ctx, notifyConvEvent, arg.Channel, arg.Payload)
+	return err
+}
+
+const setConversationLead = `-- name: SetConversationLead :exec
+UPDATE agent_conversations SET lead_id = $2 WHERE id = $1
+`
+
+type SetConversationLeadParams struct {
+	ID     pgtype.UUID `json:"id"`
+	LeadID pgtype.UUID `json:"lead_id"`
+}
+
+func (q *Queries) SetConversationLead(ctx context.Context, arg SetConversationLeadParams) error {
+	_, err := q.db.Exec(ctx, setConversationLead, arg.ID, arg.LeadID)
 	return err
 }
 
