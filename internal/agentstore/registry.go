@@ -23,18 +23,38 @@ func NewToolRegistry(q *storage.Queries, remote *tools.RemoteExecutor) *DBToolRe
 
 var _ runtime.ToolRegistry = (*DBToolRegistry)(nil)
 
-// SchemasFor возвращает JSON Schema только для включённых у агента инструментов.
+// SchemasFor возвращает JSON Schema инструментов, доступных агенту: включённые
+// в agent_tools + интейк-инструменты, если у агента настроен опросник (иначе бот
+// спрашивает поля по <intake>, но не может их записать — частый footgun).
 func (r *DBToolRegistry) SchemasFor(ctx context.Context, agentID uuid.UUID) ([]llm.ToolDef, error) {
 	enabled, err := r.q.ListEnabledTools(ctx, toUUID(agentID))
 	if err != nil {
 		return nil, err
 	}
-	out := make([]llm.ToolDef, 0, len(enabled))
+	out := make([]llm.ToolDef, 0, len(enabled)+3)
+	seen := make(map[string]bool, len(enabled)+3)
 	for _, t := range enabled {
-		if def, ok := tools.Definitions[t.ToolName]; ok {
+		if def, ok := tools.Definitions[t.ToolName]; ok && !seen[t.ToolName] {
 			out = append(out, def)
+			seen[t.ToolName] = true
 		}
 	}
+
+	// Если у агента есть поля опросника — интейк-инструменты доступны всегда:
+	// без них record_intake_fact не подаётся модели и факты не собираются,
+	// хотя <intake> в промпте просит их записывать.
+	if fields, ferr := r.q.ListIntakeFields(ctx, toUUID(agentID)); ferr == nil && len(fields) > 0 {
+		for _, name := range []string{"record_intake_fact", "confirm_intake_fact", "get_intake_status"} {
+			if seen[name] {
+				continue
+			}
+			if def, ok := tools.Definitions[name]; ok {
+				out = append(out, def)
+				seen[name] = true
+			}
+		}
+	}
+
 	return out, nil
 }
 
