@@ -534,6 +534,17 @@ func (q *Queries) GetAgentConversationByExternal(ctx context.Context, arg GetAge
 	return i, err
 }
 
+const getAgentGreeting = `-- name: GetAgentGreeting :one
+SELECT greeting_message FROM agents WHERE id = $1
+`
+
+func (q *Queries) GetAgentGreeting(ctx context.Context, id pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getAgentGreeting, id)
+	var greeting_message pgtype.Text
+	err := row.Scan(&greeting_message)
+	return greeting_message, err
+}
+
 const getChannel = `-- name: GetChannel :one
 
 SELECT id, profile_id, agent_id, channel_type, name, tg_bot_token, tg_bot_username, vk_group_id, vk_access_token, vk_secret_key, max_bot_token, avito_user_id, avito_client_id, avito_client_secret, avito_access_token, avito_token_expires_at, web_slug, web_is_public, web_rate_limit_per_min, web_allowed_domains, web_custom_domain, is_active, is_deleted, created_at, updated_at, vk_confirmation FROM agent_channels
@@ -899,6 +910,23 @@ func (q *Queries) InsertDigest(ctx context.Context, arg InsertDigestParams) erro
 		arg.Metrics,
 		arg.Insights,
 	)
+	return err
+}
+
+const insertGreetingMessage = `-- name: InsertGreetingMessage :exec
+INSERT INTO agent_messages (profile_id, conversation_id, role, content)
+VALUES ($1, $2, 'assistant', $3)
+`
+
+type InsertGreetingMessageParams struct {
+	ProfileID      pgtype.UUID `json:"profile_id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	Content        pgtype.Text `json:"content"`
+}
+
+// Приветствие агента как первое assistant-сообщение нового диалога.
+func (q *Queries) InsertGreetingMessage(ctx context.Context, arg InsertGreetingMessageParams) error {
+	_, err := q.db.Exec(ctx, insertGreetingMessage, arg.ProfileID, arg.ConversationID, arg.Content)
 	return err
 }
 

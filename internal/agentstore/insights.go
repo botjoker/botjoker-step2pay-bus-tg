@@ -24,7 +24,14 @@ func NewInsightsService(q *storage.Queries, cheap llm.LLMProvider, model string)
 	return &InsightsService{q: q, cheap: cheap, model: model}
 }
 
-const insightsPrompt = `Проанализируй диалог между AI-агентом и пользователем.
+const insightsPrompt = `Проанализируй диалог между AI-агентом (роль «Агент») и клиентом (роль «Клиент»).
+
+ВАЖНО про извлечение данных (contact_extracted, intake_extracted):
+- Бери ТОЛЬКО то, что КЛИЕНТ сообщил О СЕБЕ (имя, телефон, email, ответы на вопросы).
+- НИКОГДА не бери данные из реплик Агента (его имя, приветствие, примеры, предложения).
+  Если Агент представился (напр. «меня зовут Алексей») — это НЕ имя клиента, не записывай.
+- Если клиент явно не назвал значение — оставь поле пустым. Не угадывай и не придумывай.
+
 Верни ТОЛЬКО валидный JSON:
 {
   "tags": ["..."],
@@ -93,7 +100,7 @@ func (s *InsightsService) Process(ctx context.Context, convID uuid.UUID) error {
 
 	var b strings.Builder
 	for _, m := range msgs {
-		b.WriteString(m.Role)
+		b.WriteString(roleLabel(m.Role))
 		b.WriteString(": ")
 		b.WriteString(fromText(m.Content))
 		b.WriteString("\n")
@@ -106,9 +113,9 @@ func (s *InsightsService) Process(ctx context.Context, convID uuid.UUID) error {
 	var pb strings.Builder
 	pb.WriteString(insightsPrompt)
 	if len(fields) > 0 {
-		pb.WriteString("\n\nТакже извлеки значения полей опросника, если они явно упомянуты в диалоге. ")
+		pb.WriteString("\n\nТакже извлеки значения полей опросника, если их явно назвал КЛИЕНТ о себе. ")
 		pb.WriteString(`Добавь в JSON ключ "intake_extracted" — объект {field_key: значение}; `)
-		pb.WriteString("включай только распознанные поля, без догадок. Поля опросника:\n")
+		pb.WriteString("включай поле ТОЛЬКО если клиент сам сообщил это значение (не Агент, без догадок). Поля опросника:\n")
 		for _, f := range fields {
 			pb.WriteString("- ")
 			pb.WriteString(f.FieldKey)
@@ -322,6 +329,21 @@ func toNullBool(b *bool) pgtype.Bool {
 		return pgtype.Bool{}
 	}
 	return pgtype.Bool{Bool: *b, Valid: true}
+}
+
+// roleLabel переводит роль сообщения в явную метку для промпта insights —
+// чтобы дешёвая модель не путала, кто что сказал (и не записала данные Агента).
+func roleLabel(role string) string {
+	switch role {
+	case "user":
+		return "Клиент"
+	case "assistant":
+		return "Агент"
+	case "operator":
+		return "Оператор"
+	default:
+		return role
+	}
 }
 
 // extractJSON вырезает JSON-объект из ответа (на случай обёрток ```json).

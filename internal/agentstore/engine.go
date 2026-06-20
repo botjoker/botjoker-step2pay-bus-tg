@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/api"
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
@@ -11,6 +12,7 @@ import (
 	"github.com/botjoker/sambacrm-business-tg/internal/storage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var _ api.Engine = (*Engine)(nil)
@@ -55,6 +57,22 @@ func (e *Engine) firePostTurn(ctx context.Context, convID uuid.UUID) {
 	}
 }
 
+// recordGreeting вставляет приветствие агента первым assistant-сообщением нового
+// диалога (если приветствие задано). Best-effort — ошибка не валит создание диалога.
+func (e *Engine) recordGreeting(ctx context.Context, profileID, agentID, convID pgtype.UUID) {
+	greeting, err := e.q.GetAgentGreeting(ctx, agentID)
+	if err != nil || !greeting.Valid || strings.TrimSpace(greeting.String) == "" {
+		return
+	}
+	if err := e.q.InsertGreetingMessage(ctx, storage.InsertGreetingMessageParams{
+		ProfileID:      profileID,
+		ConversationID: convID,
+		Content:        greeting,
+	}); err != nil {
+		slog.Warn("greeting insert failed", "conversation", fromUUID(convID), "err", err)
+	}
+}
+
 // NewEngine собирает движок. deps — общие AgentOption (recorder, memory, intake,
 // takeover, billing, tools, pii, rag), которые применяются к каждому агенту.
 func NewEngine(q *storage.Queries, sink EventSink, factory ProviderFactory, ingest IngestTrigger, opProxy *runtime.OperatorProxy, deps ...runtime.AgentOption) *Engine {
@@ -80,6 +98,9 @@ func (e *Engine) StartConversation(ctx context.Context, webSlug, externalUserID 
 			ChannelID:      ch.ID,
 			ExternalUserID: externalUserID,
 		})
+		if err == nil {
+			e.recordGreeting(ctx, conv.ProfileID, conv.AgentID, conv.ID)
+		}
 	}
 	if err != nil {
 		return api.StartResult{}, err
@@ -143,6 +164,9 @@ func (e *Engine) StartChannelConversation(ctx context.Context, channelID uuid.UU
 			ExternalUserID: externalUserID,
 			ExternalChatID: toText(externalChatID),
 		})
+		if err == nil {
+			e.recordGreeting(ctx, conv.ProfileID, conv.AgentID, conv.ID)
+		}
 	}
 	if err != nil {
 		return uuid.Nil, uuid.Nil, uuid.Nil, err

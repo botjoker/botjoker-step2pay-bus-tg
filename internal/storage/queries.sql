@@ -150,6 +150,14 @@ RETURNING *;
 -- Live-событие для админского SSE (канал agent_conv_event:{profile_id}).
 SELECT pg_notify(sqlc.arg(channel)::text, sqlc.arg(payload)::text);
 
+-- name: GetAgentGreeting :one
+SELECT greeting_message FROM agents WHERE id = $1;
+
+-- name: InsertGreetingMessage :exec
+-- Приветствие агента как первое assistant-сообщение нового диалога.
+INSERT INTO agent_messages (profile_id, conversation_id, role, content)
+VALUES ($1, $2, 'assistant', $3);
+
 -- name: ListMessagesByConversation :many
 SELECT * FROM agent_messages
 WHERE conversation_id = $1
