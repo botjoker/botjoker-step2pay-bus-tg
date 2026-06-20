@@ -21,13 +21,11 @@ func num(desc string) map[string]any { return map[string]any{"type": "number", "
 
 // LocalToolNames — инструменты, выполняемые рантаймом (без HTTP к backend).
 var LocalToolNames = map[string]bool{
-	"record_intake_fact":     true,
-	"confirm_intake_fact":    true,
-	"get_intake_status":      true,
-	"get_current_time":       true,
-	"request_human_handover": true,
-	"schedule_followup":      true,
-	"cite_source":            true,
+	"record_intake_fact":  true,
+	"confirm_intake_fact": true,
+	"get_intake_status":   true,
+	"get_current_time":    true,
+	"cite_source":         true,
 }
 
 // Definitions — JSON Schema всех инструментов (для tool-calling LLM).
@@ -161,20 +159,5 @@ var Definitions = map[string]llm.ToolDef{
 		Name:        "get_current_time",
 		Description: "Текущие дата и время (для расчётов «завтра», «через час» и т.п.).",
 		Schema:      obj(map[string]any{}),
-	},
-	"request_human_handover": {
-		Name:        "request_human_handover",
-		Description: "Передать диалог человеку: помечает диалог как эскалированный.",
-		Schema: obj(map[string]any{
-			"reason": str("Кратко зачем нужен человек"),
-		}),
-	},
-	"schedule_followup": {
-		Name:        "schedule_followup",
-		Description: "Запланировать сообщение пользователю на будущее время (напоминание/follow-up).",
-		Schema: obj(map[string]any{
-			"when":            str("Когда написать, в формате RFC3339 (напр. 2026-06-20T10:00:00Z)"),
-			"message_to_user": str("Что напомнить/написать"),
-		}, "when"),
 	},
 }

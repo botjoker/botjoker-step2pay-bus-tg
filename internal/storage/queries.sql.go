@@ -12,6 +12,7 @@ import (
 )
 
 const appendMessageCitation = `-- name: AppendMessageCitation :exec
+
 UPDATE agent_messages
 SET citations = COALESCE(citations, '[]'::jsonb) || $2::jsonb
 WHERE id = $1
@@ -22,6 +23,9 @@ type AppendMessageCitationParams struct {
 	Column2 []byte      `json:"column_2"`
 }
 
+// ============================================================
+// OUTREACH / CITATIONS (local tools 084)
+// ============================================================
 func (q *Queries) AppendMessageCitation(ctx context.Context, arg AppendMessageCitationParams) error {
 	_, err := q.db.Exec(ctx, appendMessageCitation, arg.ID, arg.Column2)
 	return err
@@ -1080,38 +1084,6 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (A
 	return i, err
 }
 
-const insertScheduledOutreach = `-- name: InsertScheduledOutreach :one
-
-INSERT INTO agent_scheduled_outreach
-  (profile_id, conversation_id, agent_id, trigger_type, scheduled_for, message_hint)
-VALUES ($1, $2, $3, 'tool_call', $4, $5)
-RETURNING id
-`
-
-type InsertScheduledOutreachParams struct {
-	ProfileID      pgtype.UUID        `json:"profile_id"`
-	ConversationID pgtype.UUID        `json:"conversation_id"`
-	AgentID        pgtype.UUID        `json:"agent_id"`
-	ScheduledFor   pgtype.Timestamptz `json:"scheduled_for"`
-	MessageHint    pgtype.Text        `json:"message_hint"`
-}
-
-// ============================================================
-// OUTREACH / CITATIONS (local tools 084)
-// ============================================================
-func (q *Queries) InsertScheduledOutreach(ctx context.Context, arg InsertScheduledOutreachParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, insertScheduledOutreach,
-		arg.ProfileID,
-		arg.ConversationID,
-		arg.AgentID,
-		arg.ScheduledFor,
-		arg.MessageHint,
-	)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
 const lastMessages = `-- name: LastMessages :many
 SELECT id, profile_id, conversation_id, role, content, content_original, tool_calls, tool_call_id, tool_result, retrieved_chunks, citations, attachments, has_image, detected_language, response_language, operator_account_id, redaction_applied, redaction_log, tokens_in, tokens_out, cost_usd, latency_ms, llm_model, llm_provider, created_at FROM agent_messages
 WHERE conversation_id = $1
@@ -1618,22 +1590,6 @@ func (q *Queries) ListPromotedFeedback(ctx context.Context, arg ListPromotedFeed
 		return nil, err
 	}
 	return items, nil
-}
-
-const markEscalated = `-- name: MarkEscalated :exec
-UPDATE agent_conversations
-SET is_escalated = true, escalated_at = NOW(), escalation_reason = $2
-WHERE id = $1
-`
-
-type MarkEscalatedParams struct {
-	ID               pgtype.UUID `json:"id"`
-	EscalationReason pgtype.Text `json:"escalation_reason"`
-}
-
-func (q *Queries) MarkEscalated(ctx context.Context, arg MarkEscalatedParams) error {
-	_, err := q.db.Exec(ctx, markEscalated, arg.ID, arg.EscalationReason)
-	return err
 }
 
 const notifyConvEvent = `-- name: NotifyConvEvent :exec

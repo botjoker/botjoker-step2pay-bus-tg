@@ -121,11 +121,6 @@ UPDATE agent_conversations
 SET summary = $2, last_message_at = NOW()
 WHERE id = $1;
 
--- name: MarkEscalated :exec
-UPDATE agent_conversations
-SET is_escalated = true, escalated_at = NOW(), escalation_reason = $2
-WHERE id = $1;
-
 -- ============================================================
 -- AGENT_MESSAGES
 -- ============================================================
@@ -231,12 +226,6 @@ LIMIT 1;
 -- ============================================================
 -- OUTREACH / CITATIONS (local tools 084)
 -- ============================================================
-
--- name: InsertScheduledOutreach :one
-INSERT INTO agent_scheduled_outreach
-  (profile_id, conversation_id, agent_id, trigger_type, scheduled_for, message_hint)
-VALUES ($1, $2, $3, 'tool_call', $4, $5)
-RETURNING id;
 
 -- name: AppendMessageCitation :exec
 UPDATE agent_messages
