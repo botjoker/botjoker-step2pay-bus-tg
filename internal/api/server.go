@@ -85,6 +85,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /internal/test", s.internalJWTRequired(s.handleInternalTest))
 	mux.HandleFunc("POST /internal/ingest", s.internalJWTRequired(s.handleInternalIngest))
 	mux.HandleFunc("POST /internal/operator-message", s.internalJWTRequired(s.handleOperatorMessage))
+	mux.HandleFunc("POST /internal/llm/complete", s.internalJWTRequired(s.handleLLMComplete))
 	mux.HandleFunc("POST /internal/auth/refresh", s.handleAuthRefresh)
 
 	// VK Callback — синхронный plain-text ответ (более специфичный маршрут).
