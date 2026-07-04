@@ -193,6 +193,13 @@ func main() {
 		return tgManager.HandleUpdate(ctx, channelID, &update)
 	})
 	srv.SetVKWebhookHandler(vkManager.HandleCallback)
+	srv.SetChannelReloader(&channelReloader{
+		engine:         engine,
+		tgManager:      tgManager,
+		vkManager:      vkManager,
+		agentPublicURL: os.Getenv("AGENT_PUBLIC_URL"),
+		internalSecret: os.Getenv("INTERNAL_JWT_SECRET"),
+	})
 
 	addr := envOr("AGENT_HTTP_ADDR", ":8080")
 	go srv.Start(addr)
@@ -204,6 +211,70 @@ func main() {
 
 	slog.Info("shutting down")
 	srv.Shutdown(context.Background())
+}
+
+// channelReloader — реализация api.ChannelReloader. Дёргается backend'ом
+// после save/update/delete канала, чтобы админке не приходилось ждать рестарта
+// пода (F02.2). Для upsert перечитывает один канал из БД, расшифровывает и
+// перезапускает его в соответствующем manager'е; для telegram дополнительно
+// обновляет webhook в Telegram API.
+type channelReloader struct {
+	engine         *agentstore.Engine
+	tgManager      *telegram.Manager
+	vkManager      *vk.Manager
+	agentPublicURL string
+	internalSecret string
+}
+
+func (r *channelReloader) Reload(ctx context.Context, channelID uuid.UUID, channelType string) error {
+	switch channelType {
+	case "vk":
+		info, err := r.engine.GetVKChannel(ctx, channelID)
+		if err != nil {
+			return err
+		}
+		if info == nil {
+			r.vkManager.Stop(channelID)
+			return nil
+		}
+		return r.vkManager.Start(vk.Channel{
+			ChannelID:    info.ChannelID,
+			AccessToken:  info.AccessToken,
+			SecretKey:    info.SecretKey,
+			Confirmation: info.Confirmation,
+			GroupID:      info.GroupID,
+		})
+	case "telegram":
+		info, err := r.engine.GetTelegramChannel(ctx, channelID)
+		if err != nil {
+			return err
+		}
+		if info == nil {
+			r.tgManager.Stop(channelID)
+			return nil
+		}
+		if err := r.tgManager.Start(info.ChannelID, info.Token); err != nil {
+			return err
+		}
+		if r.agentPublicURL != "" {
+			if err := r.tgManager.SetWebhook(info.ChannelID, r.agentPublicURL, r.internalSecret); err != nil {
+				slog.Warn("telegram setWebhook failed on reload", "channel", channelID, "err", err)
+			}
+		}
+		return nil
+	default:
+		// Web/max/avito пока без in-memory-state — reload не нужен.
+		return nil
+	}
+}
+
+func (r *channelReloader) Remove(channelID uuid.UUID, channelType string) {
+	switch channelType {
+	case "vk":
+		r.vkManager.Stop(channelID)
+	case "telegram":
+		r.tgManager.Stop(channelID)
+	}
 }
 
 // startInsights запускает Asynq-воркеры (insights + weekly digest) и планировщики.

@@ -34,7 +34,17 @@ type Server struct {
 	webhooks  map[string]WebhookFunc // transport ("telegram"/...) → async-обработчик
 	vkWebhook VKWebhookFunc          // VK требует синхронный plain-text ответ
 
+	channelReloader ChannelReloader // hot-reload каналов из backend'а (F02.2)
+
 	srv *http.Server
+}
+
+// ChannelReloader перечитывает конфиг канала в memory-менеджерах транспортов.
+// Вызывается по HTTP из backend'а после save/update/delete канала — чтобы админке
+// не приходилось ждать рестарта пода. Реализуется в cmd/agent/main.go.
+type ChannelReloader interface {
+	Reload(ctx context.Context, channelID uuid.UUID, channelType string) error
+	Remove(channelID uuid.UUID, channelType string)
 }
 
 // WebhookFunc обрабатывает сырой payload вебхука транспорта (async, ответ 200/JSON).
@@ -67,6 +77,9 @@ func (s *Server) SetWebhookHandler(transport string, fn WebhookFunc) {
 // SetVKWebhookHandler регистрирует синхронный VK Callback-обработчик.
 func (s *Server) SetVKWebhookHandler(fn VKWebhookFunc) { s.vkWebhook = fn }
 
+// SetChannelReloader подключает hot-reload каналов из backend'а.
+func (s *Server) SetChannelReloader(r ChannelReloader) { s.channelReloader = r }
+
 // SetRedis подключает Redis для SSE.
 func (s *Server) SetRedis(rdb *redis.Client) { s.sse = NewSSEHub(rdb) }
 
@@ -86,6 +99,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /internal/ingest", s.internalJWTRequired(s.handleInternalIngest))
 	mux.HandleFunc("POST /internal/operator-message", s.internalJWTRequired(s.handleOperatorMessage))
 	mux.HandleFunc("POST /internal/llm/complete", s.internalJWTRequired(s.handleLLMComplete))
+	mux.HandleFunc("POST /internal/agents/channels/reload", s.internalJWTRequired(s.handleChannelReload))
 	mux.HandleFunc("POST /internal/auth/refresh", s.handleAuthRefresh)
 
 	// VK Callback — синхронный plain-text ответ (более специфичный маршрут).

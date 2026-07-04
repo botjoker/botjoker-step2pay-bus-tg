@@ -254,6 +254,54 @@ func (e *Engine) ListVKChannels(ctx context.Context) ([]VKChannelInfo, error) {
 	return out, nil
 }
 
+// GetVKChannel возвращает один VK-канал по id с расшифрованными токенами.
+// Возвращает (nil, nil), если канал удалён/неактивен/не VK. Используется
+// hot-reload'ом каналов из backend'а (POST /internal/agents/channels/reload).
+func (e *Engine) GetVKChannel(ctx context.Context, channelID uuid.UUID) (*VKChannelInfo, error) {
+	ch, err := e.q.GetChannel(ctx, toUUID(channelID))
+	if err != nil {
+		return nil, err
+	}
+	if !ch.IsActive || ch.ChannelType != "vk" {
+		return nil, nil
+	}
+	accessToken, err := decryptSecret(fromText(ch.VkAccessToken), e.secretsKey)
+	if err != nil {
+		return nil, err
+	}
+	secretKey, err := decryptSecret(fromText(ch.VkSecretKey), e.secretsKey)
+	if err != nil {
+		return nil, err
+	}
+	info := &VKChannelInfo{
+		ChannelID:    channelID,
+		AccessToken:  accessToken,
+		SecretKey:    secretKey,
+		Confirmation: fromText(ch.VkConfirmation),
+	}
+	if ch.VkGroupID.Valid {
+		info.GroupID = ch.VkGroupID.Int64
+	}
+	return info, nil
+}
+
+// GetTelegramChannel возвращает один Telegram-канал по id с расшифрованным токеном.
+// Возвращает (nil, nil), если канал удалён/неактивен/не telegram.
+func (e *Engine) GetTelegramChannel(ctx context.Context, channelID uuid.UUID) (*ChannelInfo, error) {
+	ch, err := e.q.GetChannel(ctx, toUUID(channelID))
+	if err != nil {
+		return nil, err
+	}
+	if !ch.IsActive || ch.ChannelType != "telegram" {
+		return nil, nil
+	}
+	tok, err := decryptSecret(fromText(ch.TgBotToken), e.secretsKey)
+	if err != nil {
+		return nil, err
+	}
+	return &ChannelInfo{ChannelID: channelID, Token: tok}, nil
+}
+
 // ListTelegramChannels возвращает активные Telegram-каналы с расшифрованными токенами.
 func (e *Engine) ListTelegramChannels(ctx context.Context) ([]ChannelInfo, error) {
 	rows, err := e.q.ListActiveChannelsByType(ctx, "telegram")

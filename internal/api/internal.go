@@ -146,6 +146,44 @@ func (s *Server) handleOperatorMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
 }
 
+// handleChannelReload — hot-reload одного канала после save/update/delete из
+// backend'а. Body: {"channel_id": "<uuid>", "channel_type": "vk"|"telegram",
+// "action": "upsert"|"delete"}. Убирает необходимость рестартить agent-под
+// после каждого сохранения канала в админке.
+func (s *Server) handleChannelReload(w http.ResponseWriter, r *http.Request) {
+	if s.channelReloader == nil {
+		writeError(w, http.StatusServiceUnavailable, "channel reloader not wired")
+		return
+	}
+	var req struct {
+		ChannelID   string `json:"channel_id"`
+		ChannelType string `json:"channel_type"`
+		Action      string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	cid, err := uuid.Parse(req.ChannelID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad channel_id")
+		return
+	}
+	switch req.Action {
+	case "delete":
+		s.channelReloader.Remove(cid, req.ChannelType)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+	case "upsert", "":
+		if err := s.channelReloader.Reload(r.Context(), cid, req.ChannelType); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "reloaded"})
+	default:
+		writeError(w, http.StatusBadRequest, "unknown action")
+	}
+}
+
 // handleAuthRefresh выдаёт internal-JWT (1ч) для tools/registry (tool-exec).
 // Защищён тем же internalSecret: вызывающий должен прислать действующий Bearer.
 func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
