@@ -191,7 +191,24 @@ func (o *openAICompatible) newHTTPRequest(ctx context.Context, body any) (*http.
 
 func (o *openAICompatible) Complete(ctx context.Context, req CompleteRequest) (*CompleteResult, error) {
 	body := o.buildRequest(req.Model, req.Messages, req.Tools, req.Temperature, req.MaxTokens, false)
-	if req.JSONMode {
+	switch {
+	case req.JSONSchema != nil:
+		// Strict structured output — поддерживается на OpenAI-совместимых.
+		// На провайдерах, которые не понимают json_schema type, вернётся 400 —
+		// вызывающему стоит fallback'нуться на JSONMode при ошибке.
+		name := req.JSONSchema.Name
+		if name == "" {
+			name = "response"
+		}
+		body.ResponseFormat = map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   name,
+				"strict": req.JSONSchema.Strict,
+				"schema": req.JSONSchema.Schema,
+			},
+		}
+	case req.JSONMode:
 		body.ResponseFormat = map[string]any{"type": "json_object"}
 	}
 	httpReq, err := o.newHTTPRequest(ctx, body)

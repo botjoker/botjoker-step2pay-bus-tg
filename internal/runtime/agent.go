@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
+	"github.com/botjoker/sambacrm-business-tg/internal/safety"
 	"github.com/google/uuid"
 )
 
@@ -60,6 +61,17 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 		redactedUser = req.UserMessage // fail-open: не теряем сообщение
 	}
 
+	// 1a. Prompt-injection эвристика. Не блокируем сообщение — лишь помечаем,
+	// чтобы усилить sandwich-defense в system-промпте и оставить след в логах.
+	injection := safety.Detect(req.UserMessage)
+	if injection.Suspicious {
+		a.logger.Warn("prompt injection suspected",
+			"conversation", convID,
+			"score", injection.Score,
+			"patterns", injection.Patterns,
+		)
+	}
+
 	// 2. Сохранить user-message.
 	userMsgID, err := a.recorder.Record(ctx, RecordedMessage{
 		ConversationID:   convID,
@@ -94,7 +106,12 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 	// последним сообщениям — вытаскивает то, что LLM в основном цикле мог
 	// пропустить. Skip внутри, если все обязательные поля уже собраны.
 	// До шага 5, чтобы новые факты попали в <intake>-блок этого же цикла.
-	if err := a.extractor.ExtractInline(ctx, a.cfg.AgentID, convID, a.cfg.ProfileID); err != nil {
+	if err := a.extractor.ExtractInline(ctx, ExtractInlineRequest{
+		AgentID:        a.cfg.AgentID,
+		ConversationID: convID,
+		ProfileID:      a.cfg.ProfileID,
+		ModelOverride:  a.cfg.ExtractorModel,
+	}); err != nil {
 		a.logger.Debug("inline extractor failed", "err", err)
 	}
 
@@ -119,10 +136,11 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 		})
 	}
 
-	// 5. Опросник: схема + собранные факты.
+	// 5. Опросник: схема + собранные факты + cross-conversation memory.
 	intakeSchema, _ := a.intake.LoadSchema(ctx, a.cfg.AgentID)
 	facts, _ := a.intake.LoadFacts(ctx, convID)
-	intakeBlock := renderIntakeBlock(intakeSchema, facts)
+	prevFacts, _ := a.intake.LoadPreviousFacts(ctx, a.cfg.AgentID, convID)
+	intakeBlock := renderIntakeBlock(intakeSchema, facts, prevFacts)
 
 	// 6. Few-shot примеры.
 	fewShot, _ := a.fewShot.Load(ctx, a.cfg.AgentID)
@@ -144,7 +162,7 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 	if hasTool(tools, "sell_document") {
 		sellableDocs = a.cfg.SellableDocs
 	}
-	msgs := a.buildMessages(intakeBlock, chunks, fewShot, history, redactedUser, attach, userLang, sellableDocs)
+	msgs := a.buildMessages(intakeBlock, chunks, fewShot, history, redactedUser, attach, userLang, sellableDocs, injection.Suspicious)
 
 	maxIter := a.cfg.MaxIterations
 	if maxIter <= 0 {

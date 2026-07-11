@@ -56,6 +56,28 @@ func (s *DBIntake) LoadFacts(ctx context.Context, convID uuid.UUID) ([]runtime.F
 	return out, nil
 }
 
+// LoadPreviousFacts — cross-conversation memory. Требует sqlc-регенерации
+// (make sqlc) после добавления ListPreviousFactsForContact в queries.sql.
+func (s *DBIntake) LoadPreviousFacts(ctx context.Context, agentID, convID uuid.UUID) ([]runtime.PreviousFact, error) {
+	rows, err := s.q.ListPreviousFactsForContact(ctx, storage.ListPreviousFactsForContactParams{
+		AgentID: toUUID(agentID),
+		ID:      toUUID(convID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]runtime.PreviousFact, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, runtime.PreviousFact{
+			Key:        r.FieldKey,
+			Value:      jsonbToString(r.FieldValue),
+			Verified:   r.IsVerified.Bool,
+			FromConvAt: r.FromConvAt.Time,
+		})
+	}
+	return out, nil
+}
+
 // CaptureFromRedaction — «заведомый захват» контактов: если PII-редактор нашёл
 // в сообщении телефон/email — сразу пишем факт в те поля опросника, чьи
 // field_type совпадают с семантическим типом сущности (phone/email). Значение

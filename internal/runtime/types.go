@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"time"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
 	"github.com/google/uuid"
@@ -23,6 +24,9 @@ type AgentConfig struct {
 	AutoDetectLang   bool
 	AllowedLanguages []string
 	VisionEnabled    bool
+	// ExtractorModel — per-agent override модели для inline fact extractor.
+	// Пусто → используется INSIGHTS_MODEL из env. Провайдер общий с insights.
+	ExtractorModel string
 	// SellableDocs — платные документы, которые агент может оформить (AC-3).
 	// Инъектируются в системный промпт, если включён tool sell_document.
 	SellableDocs []SellableDoc
@@ -101,6 +105,17 @@ type Fact struct {
 	Verified bool
 }
 
+// PreviousFact — факт из прошлых диалогов того же клиента с этим агентом.
+// Подмешивается в <intake> как «мягкая память» — LLM видит, но факт остаётся
+// в старом диалоге. Если клиент подтвердит — LLM вызовет record_intake_fact
+// и создаст запись в текущем диалоге.
+type PreviousFact struct {
+	Key        string
+	Value      string
+	Verified   bool
+	FromConvAt time.Time // last_message_at из прошлого диалога — для «давности»
+}
+
 // FewShotExample — пример из feedback (promoted_to_few_shot).
 type FewShotExample struct {
 	User      string
@@ -175,6 +190,10 @@ type IntakeStore interface {
 	// CaptureFromRedaction — записать факты по результатам PII-редакции.
 	// Best-effort: ошибка не должна валить обработку сообщения.
 	CaptureFromRedaction(ctx context.Context, req ContactCaptureRequest) error
+	// LoadPreviousFacts — cross-conversation memory: факты клиента из прошлых
+	// диалогов с этим агентом (сопоставление по external_user_id). Возвращает
+	// пусто, если клиент общается впервые. Best-effort: ошибка не критична.
+	LoadPreviousFacts(ctx context.Context, agentID, convID uuid.UUID) ([]PreviousFact, error)
 }
 
 // BillingTracker — учёт расхода и хард-кап.
@@ -208,5 +227,14 @@ type FewShotStore interface {
 // шанс собрать поля опросника, когда основной LLM (или сам клиент) упустил их.
 // Вызывается после сохранения user-сообщения, best-effort.
 type FactExtractor interface {
-	ExtractInline(ctx context.Context, agentID, convID, profileID uuid.UUID) error
+	ExtractInline(ctx context.Context, req ExtractInlineRequest) error
+}
+
+// ExtractInlineRequest — параметры inline-извлечения фактов.
+// ModelOverride — per-agent модель, пусто → дефолтная (INSIGHTS_MODEL).
+type ExtractInlineRequest struct {
+	AgentID        uuid.UUID
+	ConversationID uuid.UUID
+	ProfileID      uuid.UUID
+	ModelOverride  string
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/llm"
+	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/botjoker/sambacrm-business-tg/internal/storage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -364,7 +365,12 @@ func messageBodyForInsights(m storage.AgentMessage) string {
 // диалога. Вызывается runtime после сохранения user-сообщения. Задача — успеть
 // собрать факт в этом же цикле, чтобы <intake>-блок увидел его в промпте основной
 // модели. Skip если все обязательные поля уже собраны (не жжём токены).
-func (s *InsightsService) ExtractInline(ctx context.Context, agentID, convID, profileID uuid.UUID) error {
+// ModelOverride в req — per-agent модель; пусто → используется s.model.
+func (s *InsightsService) ExtractInline(ctx context.Context, req runtime.ExtractInlineRequest) error {
+	agentID := req.AgentID
+	convID := req.ConversationID
+	profileID := req.ProfileID
+
 	fields, err := s.q.ListIntakeFields(ctx, toUUID(agentID))
 	if err != nil {
 		return err
@@ -427,34 +433,44 @@ func (s *InsightsService) ExtractInline(ctx context.Context, agentID, convID, pr
 		schemaPart.WriteString("\n")
 	}
 
-	prompt := "Проанализируй диалог. Верни СТРОГО JSON вида {\"extracted\": {field_key: значение}}.\n" +
+	prompt := "Проанализируй диалог. Верни СТРОГО JSON вида {\"extracted\": {field_key: значение или null}}.\n" +
 		"Правила:\n" +
 		"- Бери ТОЛЬКО данные, которые КЛИЕНТ явно сообщил о СЕБЕ.\n" +
 		"- НЕ бери данные из реплик Агента (это не клиент).\n" +
-		"- Если поле не упомянуто клиентом — пропусти (не включай в объект).\n" +
-		"- Не угадывай. Пустой результат: {\"extracted\": {}}.\n\n" +
+		"- Если поле не упомянуто клиентом — верни null для этого ключа.\n" +
+		"- Не угадывай. Все поля обязательны к возврату (пропущенные = null).\n\n" +
 		schemaPart.String() +
 		"\nДиалог (последние сообщения):\n" +
 		dialog.String()
 
-	res, err := s.cheap.Complete(ctx, llm.CompleteRequest{
-		Model:       s.model,
+	model := req.ModelOverride
+	if model == "" {
+		model = s.model
+	}
+	llmReq := llm.CompleteRequest{
+		Model:       model,
 		Messages:    []llm.Message{{Role: llm.RoleUser, Content: prompt}},
-		JSONMode:    true,
 		Temperature: 0.0,
 		MaxTokens:   500,
-	})
+	}
+	// Structured output: на OpenAI-совместимых используем strict JSON schema
+	// (100% валидный JSON), на остальных — обычный JSONMode как fallback.
+	if isStructuredOutputCapable(s.cheap.Name()) {
+		llmReq.JSONSchema = buildExtractSchema(missing)
+	} else {
+		llmReq.JSONMode = true
+	}
+
+	res, err := s.cheap.Complete(ctx, llmReq)
 	if err != nil {
 		return err
 	}
 
-	var out struct {
-		Extracted map[string]any `json:"extracted"`
+	extracted, perr := parseExtractedWithRetry(ctx, s, llmReq, res.Content)
+	if perr != nil {
+		return fmt.Errorf("inline extract parse: %w", perr)
 	}
-	if err := json.Unmarshal([]byte(extractJSON(res.Content)), &out); err != nil {
-		return fmt.Errorf("inline extract parse: %w", err)
-	}
-	if len(out.Extracted) == 0 {
+	if len(extracted) == 0 {
 		return nil
 	}
 
@@ -468,7 +484,7 @@ func (s *InsightsService) ExtractInline(ctx context.Context, agentID, convID, pr
 		active[f.FieldKey] = f
 	}
 
-	for key, raw := range out.Extracted {
+	for key, raw := range extracted {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			continue

@@ -28,6 +28,7 @@ func LoadAgentConfig(ctx context.Context, q *storage.Queries, agentID uuid.UUID)
 		Temperature:      float32(numericToFloat(a.LlmTemperature)),
 		MaxTokens:        int4ToInt(a.LlmMaxTokens),
 		MaxIterations:    int4ToInt(a.LlmMaxIterations),
+		ExtractorModel:   fromText(a.ExtractorModel),
 		RagEnabled:       a.RagEnabled,
 		RagTopK:          int4ToInt(a.RagTopK),
 		RagMinScore:      float32(numericToFloat(a.RagMinScore)),

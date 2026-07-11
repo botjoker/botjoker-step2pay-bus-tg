@@ -214,6 +214,26 @@ UPDATE agent_conversation_facts
 SET is_verified = true, updated_at = NOW()
 WHERE conversation_id = $1 AND field_key = $2 AND superseded_by IS NULL;
 
+-- name: ListPreviousFactsForContact :many
+-- Свежие факты из ПРОШЛЫХ диалогов того же клиента (по external_user_id) в рамках
+-- того же агента. DISTINCT ON — по одному факту на field_key (самое свежее).
+-- Исключает текущий диалог. Пусто, если у диалога нет external_user_id.
+SELECT DISTINCT ON (f.field_key)
+    f.field_key,
+    f.field_value,
+    f.is_verified,
+    c.last_message_at AS from_conv_at
+FROM agent_conversation_facts f
+JOIN agent_conversations c   ON c.id = f.conversation_id
+JOIN agent_conversations cur ON cur.id = $2
+WHERE f.superseded_by IS NULL
+  AND c.agent_id = $1
+  AND c.id != cur.id
+  AND c.external_user_id IS NOT NULL
+  AND c.external_user_id != ''
+  AND c.external_user_id = cur.external_user_id
+ORDER BY f.field_key, c.last_message_at DESC;
+
 -- ============================================================
 -- AGENT_TAKEOVERS
 -- ============================================================

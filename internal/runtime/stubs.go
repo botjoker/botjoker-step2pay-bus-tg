@@ -37,6 +37,9 @@ func (noopIntake) LoadFacts(context.Context, uuid.UUID) ([]Fact, error)         
 func (noopIntake) CaptureFromRedaction(context.Context, ContactCaptureRequest) error {
 	return nil
 }
+func (noopIntake) LoadPreviousFacts(context.Context, uuid.UUID, uuid.UUID) ([]PreviousFact, error) {
+	return nil, nil
+}
 
 // noopBilling — всегда разрешает (реальный учёт — 03E).
 type noopBilling struct{}
@@ -67,6 +70,6 @@ func (noopFewShot) Load(context.Context, uuid.UUID) ([]FewShotExample, error) { 
 
 type noopExtractor struct{}
 
-func (noopExtractor) ExtractInline(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+func (noopExtractor) ExtractInline(context.Context, ExtractInlineRequest) error {
 	return nil
 }

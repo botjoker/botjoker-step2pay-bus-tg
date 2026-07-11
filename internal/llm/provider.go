@@ -105,5 +105,16 @@ type CompleteRequest struct {
 	Tools       []ToolDef
 	Temperature float32
 	MaxTokens   int
-	JSONMode    bool // принудительный JSON-вывод (если провайдер умеет)
+	JSONMode    bool            // принудительный JSON-вывод (если провайдер умеет)
+	JSONSchema  *JSONSchemaSpec // strict-mode structured output (OpenAI/gpt-4o, gpt-4o-mini)
+}
+
+// JSONSchemaSpec — описание схемы для strict-mode structured output.
+// На OpenAI-совместимых API (openai, openrouter, deepseek, t-pro) передаётся
+// как response_format={type: json_schema, json_schema: {...}}. На провайдерах
+// без поддержки — игнорируется, вызывающий должен подстраховаться JSONMode=true.
+type JSONSchemaSpec struct {
+	Name   string         // имя схемы (обязательно для OpenAI)
+	Strict bool           // требовать 100% соответствия
+	Schema map[string]any // сама JSON Schema (object)
 }
