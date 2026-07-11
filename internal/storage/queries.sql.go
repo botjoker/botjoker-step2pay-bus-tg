@@ -218,7 +218,7 @@ const getAgent = `-- name: GetAgent :one
 SELECT id, profile_id, slug, name, description, avatar_media_id,
        persona, greeting_message, fallback_message, safety_disclaimer,
        llm_provider, llm_model, llm_credentials_id, llm_temperature,
-       llm_max_tokens, llm_max_iterations,
+       llm_max_tokens, llm_max_iterations, extractor_model,
        embedding_provider, embedding_model, embedding_credentials_id, embedding_dim,
        rag_enabled, rag_top_k, rag_min_score,
        default_language, auto_detect_language, allowed_languages,
@@ -250,6 +250,7 @@ type GetAgentRow struct {
 	LlmTemperature           pgtype.Numeric     `json:"llm_temperature"`
 	LlmMaxTokens             pgtype.Int4        `json:"llm_max_tokens"`
 	LlmMaxIterations         pgtype.Int4        `json:"llm_max_iterations"`
+	ExtractorModel           pgtype.Text        `json:"extractor_model"`
 	EmbeddingProvider        pgtype.Text        `json:"embedding_provider"`
 	EmbeddingModel           pgtype.Text        `json:"embedding_model"`
 	EmbeddingCredentialsID   pgtype.UUID        `json:"embedding_credentials_id"`
@@ -299,6 +300,7 @@ func (q *Queries) GetAgent(ctx context.Context, id pgtype.UUID) (GetAgentRow, er
 		&i.LlmTemperature,
 		&i.LlmMaxTokens,
 		&i.LlmMaxIterations,
+		&i.ExtractorModel,
 		&i.EmbeddingProvider,
 		&i.EmbeddingModel,
 		&i.EmbeddingCredentialsID,
@@ -349,7 +351,7 @@ const getAgentBySlug = `-- name: GetAgentBySlug :one
 SELECT id, profile_id, slug, name, description, avatar_media_id,
        persona, greeting_message, fallback_message, safety_disclaimer,
        llm_provider, llm_model, llm_credentials_id, llm_temperature,
-       llm_max_tokens, llm_max_iterations,
+       llm_max_tokens, llm_max_iterations, extractor_model,
        embedding_provider, embedding_model, embedding_credentials_id, embedding_dim,
        rag_enabled, rag_top_k, rag_min_score,
        default_language, auto_detect_language, allowed_languages,
@@ -386,6 +388,7 @@ type GetAgentBySlugRow struct {
 	LlmTemperature           pgtype.Numeric     `json:"llm_temperature"`
 	LlmMaxTokens             pgtype.Int4        `json:"llm_max_tokens"`
 	LlmMaxIterations         pgtype.Int4        `json:"llm_max_iterations"`
+	ExtractorModel           pgtype.Text        `json:"extractor_model"`
 	EmbeddingProvider        pgtype.Text        `json:"embedding_provider"`
 	EmbeddingModel           pgtype.Text        `json:"embedding_model"`
 	EmbeddingCredentialsID   pgtype.UUID        `json:"embedding_credentials_id"`
@@ -435,6 +438,7 @@ func (q *Queries) GetAgentBySlug(ctx context.Context, arg GetAgentBySlugParams) 
 		&i.LlmTemperature,
 		&i.LlmMaxTokens,
 		&i.LlmMaxIterations,
+		&i.ExtractorModel,
 		&i.EmbeddingProvider,
 		&i.EmbeddingModel,
 		&i.EmbeddingCredentialsID,
