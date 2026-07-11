@@ -60,7 +60,7 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 	}
 
 	// 2. Сохранить user-message.
-	if _, err := a.recorder.Record(ctx, RecordedMessage{
+	userMsgID, err := a.recorder.Record(ctx, RecordedMessage{
 		ConversationID:   convID,
 		ProfileID:        a.cfg.ProfileID,
 		Role:             "user",
@@ -68,8 +68,25 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 		ContentOriginal:  req.UserMessage,
 		RedactionApplied: redactionLog != nil,
 		RedactionLog:     redactionLog,
-	}); err != nil {
+	})
+	if err != nil {
 		a.logger.Warn("record user message failed", "err", err)
+	}
+
+	// 2a. «Заведомый захват» контактов: если PII-редактор нашёл телефон/email —
+	// сразу пишем факт в поле опросника с соответствующим field_type. Работает
+	// даже если основной LLM в этом же цикле не вызовет record_intake_fact.
+	// Best-effort: ошибка не валит обработку сообщения.
+	if redactionLog != nil {
+		if err := a.intake.CaptureFromRedaction(ctx, ContactCaptureRequest{
+			ProfileID:       a.cfg.ProfileID,
+			AgentID:         a.cfg.AgentID,
+			ConversationID:  convID,
+			SourceMessageID: userMsgID,
+			RedactionLog:    redactionLog,
+		}); err != nil {
+			a.logger.Warn("capture from redaction failed", "err", err)
+		}
 	}
 
 	// 3. Определение языка.

@@ -12,9 +12,13 @@ import (
 )
 
 // RedactionEntry — запись о произведённой замене.
+// Original — исходное значение до маски. Используется downstream для захвата
+// контактов в опросник (см. IntakeStore.CaptureFromRedaction). Наружу (в лог
+// диалога) уходит только в БД рантайма, в LLM не попадает.
 type RedactionEntry struct {
 	Type        string `json:"type"`
 	Replacement string `json:"replacement"`
+	Original    string `json:"original,omitempty"`
 }
 
 // Client — HTTP-обёртка над pii-sidecar с regex-fallback.
@@ -96,8 +100,8 @@ var (
 func localRegexRedact(text string) (string, []RedactionEntry) {
 	var log []RedactionEntry
 	apply := func(re *regexp.Regexp, typeName, replacement string) {
-		text = re.ReplaceAllStringFunc(text, func(string) string {
-			log = append(log, RedactionEntry{Type: typeName, Replacement: replacement})
+		text = re.ReplaceAllStringFunc(text, func(match string) string {
+			log = append(log, RedactionEntry{Type: typeName, Replacement: replacement, Original: match})
 			return replacement
 		})
 	}

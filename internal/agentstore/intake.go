@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/botjoker/sambacrm-business-tg/internal/pii"
 	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
 	"github.com/botjoker/sambacrm-business-tg/internal/storage"
 	"github.com/google/uuid"
@@ -52,6 +54,129 @@ func (s *DBIntake) LoadFacts(ctx context.Context, convID uuid.UUID) ([]runtime.F
 		})
 	}
 	return out, nil
+}
+
+// CaptureFromRedaction — «заведомый захват» контактов: если PII-редактор нашёл
+// в сообщении телефон/email — сразу пишем факт в те поля опросника, чьи
+// field_type совпадают с семантическим типом сущности (phone/email). Значение
+// берётся из RedactionEntry.Original — реального (не маскированного) текста.
+// Не трогает verified факты и не перезаписывает, если значение не изменилось.
+func (s *DBIntake) CaptureFromRedaction(ctx context.Context, req runtime.ContactCaptureRequest) error {
+	if req.RedactionLog == nil {
+		return nil
+	}
+	entries := extractEntries(req.RedactionLog)
+	if len(entries) == 0 {
+		return nil
+	}
+
+	rows, err := s.q.ListIntakeFields(ctx, toUUID(req.AgentID))
+	if err != nil {
+		return err
+	}
+	// field_type → первое поле опросника такого типа. Порядок — по ask_priority
+	// (ListIntakeFields возвращает в этом порядке), поэтому берём самое приоритетное.
+	byType := map[string]storage.AgentIntakeField{}
+	for _, r := range rows {
+		t := strings.ToLower(strings.TrimSpace(r.FieldType))
+		if t == "" {
+			continue
+		}
+		if _, ok := byType[t]; !ok {
+			byType[t] = r
+		}
+	}
+	if len(byType) == 0 {
+		return nil
+	}
+
+	active := map[string]storage.AgentConversationFact{}
+	if existing, err := s.q.ListConversationFacts(ctx, toUUID(req.ConversationID)); err == nil {
+		for _, f := range existing {
+			active[f.FieldKey] = f
+		}
+	}
+
+	// Дедупликация по типу в рамках одного сообщения — берём первый найденный.
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if e.Original == "" || seen[e.Type] {
+			continue
+		}
+		field, ok := byType[strings.ToLower(e.Type)]
+		if !ok {
+			continue
+		}
+		seen[e.Type] = true
+
+		if ex, ok := active[field.FieldKey]; ok {
+			if ex.IsVerified.Bool {
+				continue
+			}
+			if jsonbToString(ex.FieldValue) == e.Original {
+				continue
+			}
+		}
+
+		valueJSON, err := json.Marshal(e.Original)
+		if err != nil {
+			continue
+		}
+		if err := s.q.DeactivateActiveFact(ctx, storage.DeactivateActiveFactParams{
+			ConversationID: toUUID(req.ConversationID),
+			FieldKey:       field.FieldKey,
+		}); err != nil {
+			return err
+		}
+		if _, err := s.q.InsertConversationFact(ctx, storage.InsertConversationFactParams{
+			ProfileID:       toUUID(req.ProfileID),
+			ConversationID:  toUUID(req.ConversationID),
+			IntakeFieldID:   field.ID,
+			FieldKey:        field.FieldKey,
+			FieldValue:      valueJSON,
+			Confidence:      toNumeric(0.95),
+			SourceMessageID: toUUIDOrNull(req.SourceMessageID),
+			SourceExcerpt:   toText("auto (pii regex)"),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractEntries тянет []pii.RedactionEntry из map[string]any лога, который
+// возвращает pii.Client. Поддерживаем оба формата: типизированный slice (regex
+// mode) и []any с map'ами (если лог придёт через JSON от sidecar).
+func extractEntries(log map[string]any) []pii.RedactionEntry {
+	raw, ok := log["entries"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []pii.RedactionEntry:
+		return v
+	case []any:
+		out := make([]pii.RedactionEntry, 0, len(v))
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			e := pii.RedactionEntry{}
+			if t, ok := m["type"].(string); ok {
+				e.Type = t
+			}
+			if r, ok := m["replacement"].(string); ok {
+				e.Replacement = r
+			}
+			if o, ok := m["original"].(string); ok {
+				e.Original = o
+			}
+			out = append(out, e)
+		}
+		return out
+	}
+	return nil
 }
 
 // jsonbToString разворачивает jsonb-значение факта в человекочитаемую строку.

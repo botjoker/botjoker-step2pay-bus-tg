@@ -34,6 +34,9 @@ type noopIntake struct{}
 
 func (noopIntake) LoadSchema(context.Context, uuid.UUID) ([]IntakeField, error) { return nil, nil }
 func (noopIntake) LoadFacts(context.Context, uuid.UUID) ([]Fact, error)         { return nil, nil }
+func (noopIntake) CaptureFromRedaction(context.Context, ContactCaptureRequest) error {
+	return nil
+}
 
 // noopBilling — всегда разрешает (реальный учёт — 03E).
 type noopBilling struct{}

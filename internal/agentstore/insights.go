@@ -98,11 +98,15 @@ func (s *InsightsService) Process(ctx context.Context, convID uuid.UUID) error {
 		return nil
 	}
 
+	// Для post-processing берём НЕмаскированный текст (content_original) — иначе
+	// дешёвая модель увидит `[PHONE]`/`[EMAIL]` вместо реальных значений и
+	// извлечёт маску в contact_extracted. fallback на content — для сообщений
+	// без PII-редакции (assistant/operator).
 	var b strings.Builder
 	for _, m := range msgs {
 		b.WriteString(roleLabel(m.Role))
 		b.WriteString(": ")
-		b.WriteString(fromText(m.Content))
+		b.WriteString(messageBodyForInsights(m))
 		b.WriteString("\n")
 	}
 
@@ -344,6 +348,16 @@ func roleLabel(role string) string {
 	default:
 		return role
 	}
+}
+
+// messageBodyForInsights возвращает исходный текст сообщения (content_original)
+// если он есть, иначе — редактированный content. Обеспечивает извлечение
+// реальных телефонов/email в insights/writeFacts.
+func messageBodyForInsights(m storage.AgentMessage) string {
+	if orig := fromText(m.ContentOriginal); strings.TrimSpace(orig) != "" {
+		return orig
+	}
+	return fromText(m.Content)
 }
 
 // extractJSON вырезает JSON-объект из ответа (на случай обёрток ```json).

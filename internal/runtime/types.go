@@ -81,6 +81,19 @@ type IntakeField struct {
 	AskPriority int
 }
 
+// ContactCaptureRequest — параметры «заведомого захвата» контактов, найденных
+// PII-редактором в сообщении пользователя. Работает поверх схемы опросника:
+// значения пишутся только в поля с семантическим field_type (phone/email).
+// Это гарантирует сбор контакта даже если LLM во время диалога промахнётся
+// с tool-call record_intake_fact.
+type ContactCaptureRequest struct {
+	ProfileID       uuid.UUID
+	AgentID         uuid.UUID
+	ConversationID  uuid.UUID
+	SourceMessageID uuid.UUID
+	RedactionLog    map[string]any
+}
+
 // Fact — собранный факт диалога (из agent_conversation_facts).
 type Fact struct {
 	Key      string
@@ -159,6 +172,9 @@ type PIIClient interface {
 type IntakeStore interface {
 	LoadSchema(ctx context.Context, agentID uuid.UUID) ([]IntakeField, error)
 	LoadFacts(ctx context.Context, convID uuid.UUID) ([]Fact, error)
+	// CaptureFromRedaction — записать факты по результатам PII-редакции.
+	// Best-effort: ошибка не должна валить обработку сообщения.
+	CaptureFromRedaction(ctx context.Context, req ContactCaptureRequest) error
 }
 
 // BillingTracker — учёт расхода и хард-кап.
