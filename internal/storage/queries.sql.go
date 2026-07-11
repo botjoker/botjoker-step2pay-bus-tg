@@ -1550,6 +1550,64 @@ func (q *Queries) ListMessagesByConversation(ctx context.Context, arg ListMessag
 	return items, nil
 }
 
+const listPreviousFactsForContact = `-- name: ListPreviousFactsForContact :many
+SELECT DISTINCT ON (f.field_key)
+    f.field_key,
+    f.field_value,
+    f.is_verified,
+    c.last_message_at AS from_conv_at
+FROM agent_conversation_facts f
+JOIN agent_conversations c   ON c.id = f.conversation_id
+JOIN agent_conversations cur ON cur.id = $2
+WHERE f.superseded_by IS NULL
+  AND c.agent_id = $1
+  AND c.id != cur.id
+  AND c.external_user_id IS NOT NULL
+  AND c.external_user_id != ''
+  AND c.external_user_id = cur.external_user_id
+ORDER BY f.field_key, c.last_message_at DESC
+`
+
+type ListPreviousFactsForContactParams struct {
+	AgentID pgtype.UUID `json:"agent_id"`
+	ID      pgtype.UUID `json:"id"`
+}
+
+type ListPreviousFactsForContactRow struct {
+	FieldKey   string             `json:"field_key"`
+	FieldValue []byte             `json:"field_value"`
+	IsVerified pgtype.Bool        `json:"is_verified"`
+	FromConvAt pgtype.Timestamptz `json:"from_conv_at"`
+}
+
+// Свежие факты из ПРОШЛЫХ диалогов того же клиента (по external_user_id) в рамках
+// того же агента. DISTINCT ON — по одному факту на field_key (самое свежее).
+// Исключает текущий диалог. Пусто, если у диалога нет external_user_id.
+func (q *Queries) ListPreviousFactsForContact(ctx context.Context, arg ListPreviousFactsForContactParams) ([]ListPreviousFactsForContactRow, error) {
+	rows, err := q.db.Query(ctx, listPreviousFactsForContact, arg.AgentID, arg.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPreviousFactsForContactRow{}
+	for rows.Next() {
+		var i ListPreviousFactsForContactRow
+		if err := rows.Scan(
+			&i.FieldKey,
+			&i.FieldValue,
+			&i.IsVerified,
+			&i.FromConvAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPromotedFeedback = `-- name: ListPromotedFeedback :many
 
 SELECT message_id, correction

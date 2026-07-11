@@ -57,6 +57,8 @@ type Agent struct {
 	CreatedBy                pgtype.UUID        `json:"created_by"`
 	UpdatedBy                pgtype.UUID        `json:"updated_by"`
 	AutoCreateLead           bool               `json:"auto_create_lead"`
+	// Модель для inline-извлечения фактов (post-user-message). NULL → используется INSIGHTS_MODEL из env. Провайдер общий с insights.
+	ExtractorModel pgtype.Text `json:"extractor_model"`
 }
 
 type AgentBillingUsage struct {
@@ -534,39 +536,135 @@ type Certificate struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
-type CmsBlock struct {
-	ID          pgtype.UUID        `json:"id"`
-	ProfileID   pgtype.UUID        `json:"profile_id"`
-	Name        string             `json:"name"`
-	Description pgtype.Text        `json:"description"`
-	BlockType   string             `json:"block_type"`
-	Content     []byte             `json:"content"`
-	IsReusable  pgtype.Bool        `json:"is_reusable"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	CreatedBy   pgtype.UUID        `json:"created_by"`
-}
-
 type CmsPage struct {
-	ID          pgtype.UUID        `json:"id"`
-	ProfileID   pgtype.UUID        `json:"profile_id"`
-	Title       string             `json:"title"`
-	Slug        string             `json:"slug"`
-	Settings    []byte             `json:"settings"`
-	IsPublished pgtype.Bool        `json:"is_published"`
-	PublishedAt pgtype.Timestamptz `json:"published_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	CreatedBy   pgtype.UUID        `json:"created_by"`
+	ID              pgtype.UUID        `json:"id"`
+	ProfileID       pgtype.UUID        `json:"profile_id"`
+	Title           string             `json:"title"`
+	Slug            string             `json:"slug"`
+	Settings        []byte             `json:"settings"`
+	IsPublished     pgtype.Bool        `json:"is_published"`
+	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	ContentTree     []byte             `json:"content_tree"`
+	ThemeID         pgtype.UUID        `json:"theme_id"`
+	MetaTitle       pgtype.Text        `json:"meta_title"`
+	MetaDescription pgtype.Text        `json:"meta_description"`
+	OgImageMediaID  pgtype.UUID        `json:"og_image_media_id"`
+	FaviconMediaID  pgtype.UUID        `json:"favicon_media_id"`
+	CustomCss       pgtype.Text        `json:"custom_css"`
+	CustomHeadHtml  pgtype.Text        `json:"custom_head_html"`
+	CustomBodyHtml  pgtype.Text        `json:"custom_body_html"`
 }
 
-type CmsPageBlock struct {
+type CmsTheme struct {
 	ID              pgtype.UUID        `json:"id"`
-	PageID          pgtype.UUID        `json:"page_id"`
-	BlockID         pgtype.UUID        `json:"block_id"`
-	OrderIndex      int32              `json:"order_index"`
-	ContentOverride []byte             `json:"content_override"`
+	ProfileID       pgtype.UUID        `json:"profile_id"`
+	Name            string             `json:"name"`
+	Description     pgtype.Text        `json:"description"`
+	Tokens          []byte             `json:"tokens"`
+	IsDefault       bool               `json:"is_default"`
+	IsSystem        bool               `json:"is_system"`
+	PreviewImageUrl pgtype.Text        `json:"preview_image_url"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type CopilotEmployeeSetting struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ProfileID           pgtype.UUID        `json:"profile_id"`
+	AccountID           pgtype.UUID        `json:"account_id"`
+	RoleDescription     pgtype.Text        `json:"role_description"`
+	UnknownTermsDomains []string           `json:"unknown_terms_domains"`
+	PromptOverrides     []byte             `json:"prompt_overrides"`
+	EnabledCategories   []string           `json:"enabled_categories"`
+	LlmCredentialsID    pgtype.UUID        `json:"llm_credentials_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	PresetID            pgtype.Text        `json:"preset_id"`
+	DomainKnowledge     []byte             `json:"domain_knowledge"`
+	KnownTermsGlossary  []string           `json:"known_terms_glossary"`
+}
+
+type CopilotInsight struct {
+	ID               pgtype.UUID        `json:"id"`
+	SessionID        pgtype.UUID        `json:"session_id"`
+	ProfileID        pgtype.UUID        `json:"profile_id"`
+	AccountID        pgtype.UUID        `json:"account_id"`
+	Category         string             `json:"category"`
+	Title            string             `json:"title"`
+	Content          string             `json:"content"`
+	SourceSegmentIds []byte             `json:"source_segment_ids"`
+	DedupHash        string             `json:"dedup_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type CopilotSegment struct {
+	ID           pgtype.UUID        `json:"id"`
+	SessionID    pgtype.UUID        `json:"session_id"`
+	ProfileID    pgtype.UUID        `json:"profile_id"`
+	AccountID    pgtype.UUID        `json:"account_id"`
+	SpeakerLabel string             `json:"speaker_label"`
+	Text         string             `json:"text"`
+	TsStartMs    int64              `json:"ts_start_ms"`
+	TsEndMs      int64              `json:"ts_end_ms"`
+	IsPartial    bool               `json:"is_partial"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type CopilotSession struct {
+	ID                    pgtype.UUID        `json:"id"`
+	ProfileID             pgtype.UUID        `json:"profile_id"`
+	AccountID             pgtype.UUID        `json:"account_id"`
+	Title                 pgtype.Text        `json:"title"`
+	Status                string             `json:"status"`
+	SourceType            string             `json:"source_type"`
+	ConsentAcknowledgedAt pgtype.Timestamptz `json:"consent_acknowledged_at"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	StoppedAt             pgtype.Timestamptz `json:"stopped_at"`
+	LastAnalyzedAt        pgtype.Timestamptz `json:"last_analyzed_at"`
+	TotalSecondsBilled    int32              `json:"total_seconds_billed"`
+	TotalLlmTokensIn      int32              `json:"total_llm_tokens_in"`
+	TotalLlmTokensOut     int32              `json:"total_llm_tokens_out"`
+	IsDeleted             bool               `json:"is_deleted"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type CopilotSpeaker struct {
+	ID          pgtype.UUID        `json:"id"`
+	SessionID   pgtype.UUID        `json:"session_id"`
+	Label       string             `json:"label"`
+	DisplayName pgtype.Text        `json:"display_name"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type CopilotTenantSetting struct {
+	ID                               pgtype.UUID        `json:"id"`
+	ProfileID                        pgtype.UUID        `json:"profile_id"`
+	IsEnabled                        bool               `json:"is_enabled"`
+	DefaultLlmCredentialsID          pgtype.UUID        `json:"default_llm_credentials_id"`
+	MonthlySttSecondsLimitPerAccount int32              `json:"monthly_stt_seconds_limit_per_account"`
+	MonthlyLlmTokensLimitPerAccount  int32              `json:"monthly_llm_tokens_limit_per_account"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
+	SttCredentialsID                 pgtype.UUID        `json:"stt_credentials_id"`
+	DefaultLlmModel                  pgtype.Text        `json:"default_llm_model"`
+}
+
+type CopilotUsagePeriod struct {
+	ID               pgtype.UUID        `json:"id"`
+	ProfileID        pgtype.UUID        `json:"profile_id"`
+	AccountID        pgtype.UUID        `json:"account_id"`
+	PeriodStart      pgtype.Date        `json:"period_start"`
+	SttSeconds       int32              `json:"stt_seconds"`
+	LlmTokensIn      int32              `json:"llm_tokens_in"`
+	LlmTokensOut     int32              `json:"llm_tokens_out"`
+	SessionsCount    int32              `json:"sessions_count"`
+	CostUsdEstimated pgtype.Numeric     `json:"cost_usd_estimated"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type CoreAccount struct {
@@ -653,9 +751,17 @@ type CoreProfile struct {
 	AllowedLlmProviders       []string           `json:"allowed_llm_providers"`
 	AllowedEmbeddingProviders []string           `json:"allowed_embedding_providers"`
 	// true → runtime разрешает только РФ/local провайдеров, даже если в allowed_llm_providers есть зарубежные
-	SovereignMode             bool   `json:"sovereign_mode"`
-	AgentObservabilityEnabled bool   `json:"agent_observability_enabled"`
-	AgentPlanTier             string `json:"agent_plan_tier"`
+	SovereignMode             bool        `json:"sovereign_mode"`
+	AgentObservabilityEnabled bool        `json:"agent_observability_enabled"`
+	AgentPlanTier             string      `json:"agent_plan_tier"`
+	Okved                     pgtype.Text `json:"okved"`
+	DirectorName              pgtype.Text `json:"director_name"`
+	DirectorPosition          pgtype.Text `json:"director_position"`
+	AccountantName            pgtype.Text `json:"accountant_name"`
+	DirectorActsOn            pgtype.Text `json:"director_acts_on"`
+	LogoMediaID               pgtype.UUID `json:"logo_media_id"`
+	StampMediaID              pgtype.UUID `json:"stamp_media_id"`
+	SignatureMediaID          pgtype.UUID `json:"signature_media_id"`
 }
 
 type CoreProfileModule struct {
@@ -739,6 +845,15 @@ type Customer struct {
 	DocumentMediaID   pgtype.UUID        `json:"document_media_id"`
 }
 
+type CustomerChannelIdentity struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	CustomerID  pgtype.UUID        `json:"customer_id"`
+	ChannelType string             `json:"channel_type"`
+	ExternalID  string             `json:"external_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type CustomerVkLink struct {
 	ID                   pgtype.UUID        `json:"id"`
 	ProfileID            pgtype.UUID        `json:"profile_id"`
@@ -819,25 +934,67 @@ type DivisionSize struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DocumentNumber struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProfileID pgtype.UUID        `json:"profile_id"`
+	DocType   string             `json:"doc_type"`
+	Year      int32              `json:"year"`
+	Number    int32              `json:"number"`
+	Formatted string             `json:"formatted"`
+	RenderID  pgtype.UUID        `json:"render_id"`
+	IssuedAt  pgtype.Timestamptz `json:"issued_at"`
+}
+
+type DocumentNumberSequence struct {
+	ProfileID  pgtype.UUID `json:"profile_id"`
+	DocType    string      `json:"doc_type"`
+	Year       int32       `json:"year"`
+	NextNumber int32       `json:"next_number"`
+	Format     string      `json:"format"`
+}
+
+type DocumentRender struct {
+	ID               pgtype.UUID        `json:"id"`
+	ProfileID        pgtype.UUID        `json:"profile_id"`
+	TemplateID       pgtype.UUID        `json:"template_id"`
+	TemplateSnapshot string             `json:"template_snapshot"`
+	TemplateName     string             `json:"template_name"`
+	DocType          string             `json:"doc_type"`
+	ValuesSnapshot   []byte             `json:"values_snapshot"`
+	EntityType       pgtype.Text        `json:"entity_type"`
+	EntityID         pgtype.UUID        `json:"entity_id"`
+	PdfMediaID       pgtype.UUID        `json:"pdf_media_id"`
+	DocxMediaID      pgtype.UUID        `json:"docx_media_id"`
+	DeliveryStatus   string             `json:"delivery_status"`
+	DeliveryMeta     []byte             `json:"delivery_meta"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+}
+
 type DocumentTemplate struct {
-	ID           pgtype.UUID        `json:"id"`
-	ProfileID    pgtype.UUID        `json:"profile_id"`
-	EntityType   pgtype.Text        `json:"entity_type"`
-	AgentID      pgtype.UUID        `json:"agent_id"`
-	Name         string             `json:"name"`
-	DocType      string             `json:"doc_type"`
-	BodyTemplate string             `json:"body_template"`
-	Variables    []byte             `json:"variables"`
-	PriceAmount  pgtype.Numeric     `json:"price_amount"`
-	Currency     string             `json:"currency"`
-	Disclaimer   pgtype.Text        `json:"disclaimer"`
-	Format       string             `json:"format"`
-	IsActive     bool               `json:"is_active"`
-	IsDeleted    bool               `json:"is_deleted"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	CreatedBy    pgtype.UUID        `json:"created_by"`
-	UpdatedBy    pgtype.UUID        `json:"updated_by"`
+	ID                pgtype.UUID        `json:"id"`
+	ProfileID         pgtype.UUID        `json:"profile_id"`
+	EntityType        pgtype.Text        `json:"entity_type"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	Name              string             `json:"name"`
+	DocType           string             `json:"doc_type"`
+	BodyTemplate      string             `json:"body_template"`
+	Variables         []byte             `json:"variables"`
+	PriceAmount       pgtype.Numeric     `json:"price_amount"`
+	Currency          string             `json:"currency"`
+	Disclaimer        pgtype.Text        `json:"disclaimer"`
+	Format            string             `json:"format"`
+	IsActive          bool               `json:"is_active"`
+	IsDeleted         bool               `json:"is_deleted"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	UpdatedBy         pgtype.UUID        `json:"updated_by"`
+	SourceMediaID     pgtype.UUID        `json:"source_media_id"`
+	AutoNumbered      bool               `json:"auto_numbered"`
+	NumberFormat      pgtype.Text        `json:"number_format"`
+	AvailableToAgents bool               `json:"available_to_agents"`
+	AgentDescription  pgtype.Text        `json:"agent_description"`
 }
 
 type EducationBalanceAccount struct {
@@ -1577,6 +1734,21 @@ type Federation struct {
 	LogoUrl   pgtype.Text        `json:"logo_url"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GlobalCredential struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProfileID      pgtype.UUID        `json:"profile_id"`
+	Name           string             `json:"name"`
+	CredentialType string             `json:"credential_type"`
+	Description    pgtype.Text        `json:"description"`
+	Key1           pgtype.Text        `json:"key1"`
+	Key2           pgtype.Text        `json:"key2"`
+	Key3           pgtype.Text        `json:"key3"`
+	Metadata       []byte             `json:"metadata"`
+	IsActive       bool               `json:"is_active"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type GroomingService struct {
