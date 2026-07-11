@@ -202,3 +202,11 @@ type MessageRecorder interface {
 type FewShotStore interface {
 	Load(ctx context.Context, agentID uuid.UUID) ([]FewShotExample, error)
 }
+
+// FactExtractor — отдельный inline-проход дешёвой моделью, вытаскивает факты
+// из последних сообщений и пишет их в agent_conversation_facts. Даёт второй
+// шанс собрать поля опросника, когда основной LLM (или сам клиент) упустил их.
+// Вызывается после сохранения user-сообщения, best-effort.
+type FactExtractor interface {
+	ExtractInline(ctx context.Context, agentID, convID, profileID uuid.UUID) error
+}

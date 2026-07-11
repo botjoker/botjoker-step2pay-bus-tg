@@ -34,18 +34,38 @@ func (r *DBToolRegistry) recordIntakeFact(ctx context.Context, ec runtime.ToolEx
 	if key == "" {
 		return map[string]any{"error": "field_key required"}, nil
 	}
-	valueJSON, _ := json.Marshal(args["value"])
 	excerpt, _ := args["source_excerpt"].(string)
 
-	// intake_field_id по ключу (если поле описано в схеме); NULL если не найдено.
+	// intake_field_id + field_info по ключу (для валидации по field_type).
 	fieldID := pgtype.UUID{}
+	var fieldInfo *storage.AgentIntakeField
 	fields, _ := r.q.ListIntakeFields(ctx, toUUID(ec.AgentID))
-	for _, f := range fields {
-		if f.FieldKey == key {
-			fieldID = f.ID
+	for i := range fields {
+		if fields[i].FieldKey == key {
+			fieldID = fields[i].ID
+			fieldInfo = &fields[i]
 			break
 		}
 	}
+
+	// Валидация значения от LLM. Дешёвые модели (DeepSeek/gpt-4o-mini) часто
+	// путают формат — валидируем и нормализуем, при провале просим модель
+	// переспросить клиента (возврат ошибки, а не запись в БД).
+	rawStr := valueToString(args["value"])
+	normalized, verr := validateAndNormalize(rawStr, fieldInfo)
+	if verr != nil {
+		out := map[string]any{
+			"error":  "value_invalid",
+			"field":  key,
+			"reason": verr.Error(),
+			"hint":   "переспроси клиента корректное значение в естественной форме, не показывай ему технические подробности",
+		}
+		if fmt := expectedFormat(fieldInfo); fmt != "" {
+			out["expected_format"] = fmt
+		}
+		return out, nil
+	}
+	valueJSON, _ := json.Marshal(normalized)
 
 	// Вытесняем предыдущее активное значение и вставляем новое.
 	if err := r.q.DeactivateActiveFact(ctx, storage.DeactivateActiveFactParams{
@@ -68,7 +88,11 @@ func (r *DBToolRegistry) recordIntakeFact(ctx context.Context, ec runtime.ToolEx
 	}
 
 	remaining := r.remainingRequired(ctx, ec)
-	return map[string]any{"status": "recorded", "remaining_required": remaining}, nil
+	return map[string]any{
+		"status":             "recorded",
+		"normalized_value":   normalized,
+		"remaining_required": remaining,
+	}, nil
 }
 
 func (r *DBToolRegistry) confirmIntakeFact(ctx context.Context, ec runtime.ToolExecCtx, args map[string]any) (map[string]any, error) {

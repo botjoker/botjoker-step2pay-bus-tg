@@ -16,16 +16,17 @@ type Agent struct {
 	cfg      AgentConfig
 	provider llm.LLMProvider
 
-	tools    ToolRegistry
-	rag      RAGClient
-	pii      PIIClient
-	intake   IntakeStore
-	billing  BillingTracker
-	memory   Memory
-	takeover TakeoverGate
-	recorder MessageRecorder
-	fewShot  FewShotStore
-	logger   *slog.Logger
+	tools     ToolRegistry
+	rag       RAGClient
+	pii       PIIClient
+	intake    IntakeStore
+	billing   BillingTracker
+	memory    Memory
+	takeover  TakeoverGate
+	recorder  MessageRecorder
+	fewShot   FewShotStore
+	extractor FactExtractor
+	logger    *slog.Logger
 }
 
 // Run — главный entrypoint. Возвращает канал StreamEvent для транспорта.
@@ -89,17 +90,31 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 		}
 	}
 
+	// 2b. Inline fact extractor: короткий прицельный вызов дешёвой модели по
+	// последним сообщениям — вытаскивает то, что LLM в основном цикле мог
+	// пропустить. Skip внутри, если все обязательные поля уже собраны.
+	// До шага 5, чтобы новые факты попали в <intake>-блок этого же цикла.
+	if err := a.extractor.ExtractInline(ctx, a.cfg.AgentID, convID, a.cfg.ProfileID); err != nil {
+		a.logger.Debug("inline extractor failed", "err", err)
+	}
+
 	// 3. Определение языка.
 	userLang := a.detectLanguage(req.UserMessage)
 
 	// 4. RAG (если включён).
 	var chunks []RAGChunk
 	if a.cfg.RagEnabled {
+		// Дешёвые модели (DeepSeek/gpt-4o-mini) хуже удерживают внимание на длинном
+		// контексте — top-3 даёт лучшее качество, чем top-10 с шумом.
+		topK := a.cfg.RagTopK
+		if topK <= 0 {
+			topK = 3
+		}
 		chunks, _ = a.rag.Search(ctx, RAGSearchRequest{
 			ProfileID: a.cfg.ProfileID,
 			AgentID:   a.cfg.AgentID,
 			Query:     req.UserMessage,
-			TopK:      a.cfg.RagTopK,
+			TopK:      topK,
 			MinScore:  a.cfg.RagMinScore,
 		})
 	}
@@ -133,7 +148,10 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 
 	maxIter := a.cfg.MaxIterations
 	if maxIter <= 0 {
-		maxIter = 8
+		// Дешёвые модели склонны к «зомби-циклам» (повторные одинаковые tool-calls).
+		// 3 итерации достаточно для сценария: think → tool → reply. Более сложные
+		// цепочки — через explicit MaxIterations в конфиге агента.
+		maxIter = 3
 	}
 
 	for iter := 0; iter < maxIter; iter++ {

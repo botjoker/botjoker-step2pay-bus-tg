@@ -360,6 +360,177 @@ func messageBodyForInsights(m storage.AgentMessage) string {
 	return fromText(m.Content)
 }
 
+// ExtractInline — inline-проход дешёвой моделью по последним 6 сообщениям
+// диалога. Вызывается runtime после сохранения user-сообщения. Задача — успеть
+// собрать факт в этом же цикле, чтобы <intake>-блок увидел его в промпте основной
+// модели. Skip если все обязательные поля уже собраны (не жжём токены).
+func (s *InsightsService) ExtractInline(ctx context.Context, agentID, convID, profileID uuid.UUID) error {
+	fields, err := s.q.ListIntakeFields(ctx, toUUID(agentID))
+	if err != nil {
+		return err
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+
+	facts, _ := s.q.ListConversationFacts(ctx, toUUID(convID))
+	haveNonEmpty := map[string]bool{}
+	for _, f := range facts {
+		if v := jsonbToString(f.FieldValue); strings.TrimSpace(v) != "" {
+			haveNonEmpty[f.FieldKey] = true
+		}
+	}
+
+	var missing []storage.AgentIntakeField
+	var missingRequired int
+	for _, f := range fields {
+		if haveNonEmpty[f.FieldKey] {
+			continue
+		}
+		missing = append(missing, f)
+		if f.IsRequired {
+			missingRequired++
+		}
+	}
+	// Все обязательные собраны — не тратим токены. Опциональные оставляем
+	// пост-процессору insights.
+	if missingRequired == 0 {
+		return nil
+	}
+
+	msgs, err := s.q.ListMessagesByConversation(ctx, storage.ListMessagesByConversationParams{
+		ConversationID: toUUID(convID),
+		Limit:          6,
+		Offset:         0,
+	})
+	if err != nil || len(msgs) == 0 {
+		return err
+	}
+
+	var dialog strings.Builder
+	for _, m := range msgs {
+		dialog.WriteString(roleLabel(m.Role))
+		dialog.WriteString(": ")
+		dialog.WriteString(messageBodyForInsights(m))
+		dialog.WriteString("\n")
+	}
+
+	var schemaPart strings.Builder
+	schemaPart.WriteString("Поля для извлечения:\n")
+	for _, f := range missing {
+		schemaPart.WriteString("- ")
+		schemaPart.WriteString(f.FieldKey)
+		schemaPart.WriteString(" (")
+		schemaPart.WriteString(f.FieldType)
+		schemaPart.WriteString("): ")
+		schemaPart.WriteString(f.FieldLabel)
+		schemaPart.WriteString("\n")
+	}
+
+	prompt := "Проанализируй диалог. Верни СТРОГО JSON вида {\"extracted\": {field_key: значение}}.\n" +
+		"Правила:\n" +
+		"- Бери ТОЛЬКО данные, которые КЛИЕНТ явно сообщил о СЕБЕ.\n" +
+		"- НЕ бери данные из реплик Агента (это не клиент).\n" +
+		"- Если поле не упомянуто клиентом — пропусти (не включай в объект).\n" +
+		"- Не угадывай. Пустой результат: {\"extracted\": {}}.\n\n" +
+		schemaPart.String() +
+		"\nДиалог (последние сообщения):\n" +
+		dialog.String()
+
+	res, err := s.cheap.Complete(ctx, llm.CompleteRequest{
+		Model:       s.model,
+		Messages:    []llm.Message{{Role: llm.RoleUser, Content: prompt}},
+		JSONMode:    true,
+		Temperature: 0.0,
+		MaxTokens:   500,
+	})
+	if err != nil {
+		return err
+	}
+
+	var out struct {
+		Extracted map[string]any `json:"extracted"`
+	}
+	if err := json.Unmarshal([]byte(extractJSON(res.Content)), &out); err != nil {
+		return fmt.Errorf("inline extract parse: %w", err)
+	}
+	if len(out.Extracted) == 0 {
+		return nil
+	}
+
+	// Индекс полей и активных фактов — для проверки и валидации.
+	fieldByKey := map[string]storage.AgentIntakeField{}
+	for _, f := range fields {
+		fieldByKey[f.FieldKey] = f
+	}
+	active := map[string]storage.AgentConversationFact{}
+	for _, f := range facts {
+		active[f.FieldKey] = f
+	}
+
+	for key, raw := range out.Extracted {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		rawStr := valueToString(raw)
+		if rawStr == "" {
+			continue
+		}
+		fi, hasField := fieldByKey[key]
+		var normalized string
+		if hasField {
+			n, verr := validateAndNormalize(rawStr, &fi)
+			if verr != nil {
+				slog.Debug("inline extract: validation failed", "key", key, "err", verr)
+				continue
+			}
+			normalized = n
+		} else {
+			normalized = strings.TrimSpace(rawStr)
+		}
+		if normalized == "" {
+			continue
+		}
+		if ex, ok := active[key]; ok {
+			if ex.IsVerified.Bool {
+				continue
+			}
+			if jsonbToString(ex.FieldValue) == normalized {
+				continue
+			}
+		}
+
+		valueJSON, err := json.Marshal(normalized)
+		if err != nil {
+			continue
+		}
+		var fieldID pgtype.UUID
+		if hasField {
+			fieldID = fi.ID
+		}
+		if err := s.q.DeactivateActiveFact(ctx, storage.DeactivateActiveFactParams{
+			ConversationID: toUUID(convID),
+			FieldKey:       key,
+		}); err != nil {
+			slog.Warn("inline extract: deactivate failed", "key", key, "err", err)
+			continue
+		}
+		if _, err := s.q.InsertConversationFact(ctx, storage.InsertConversationFactParams{
+			ProfileID:      toUUID(profileID),
+			ConversationID: toUUID(convID),
+			IntakeFieldID:  fieldID,
+			FieldKey:       key,
+			FieldValue:     valueJSON,
+			Confidence:     toNumeric(0.75),
+			SourceExcerpt:  toText("auto (inline extractor)"),
+		}); err != nil {
+			slog.Warn("inline extract: insert failed", "key", key, "err", err)
+		}
+	}
+	return nil
+}
+
 // extractJSON вырезает JSON-объект из ответа (на случай обёрток ```json).
 func extractJSON(s string) string {
 	start := strings.IndexByte(s, '{')

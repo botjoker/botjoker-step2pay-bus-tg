@@ -64,3 +64,9 @@ func (noopRecorder) Record(context.Context, RecordedMessage) (uuid.UUID, error) 
 type noopFewShot struct{}
 
 func (noopFewShot) Load(context.Context, uuid.UUID) ([]FewShotExample, error) { return nil, nil }
+
+type noopExtractor struct{}
+
+func (noopExtractor) ExtractInline(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return nil
+}

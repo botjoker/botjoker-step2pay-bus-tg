@@ -81,6 +81,19 @@ func main() {
 	piiClient := pii.New(os.Getenv("PII_SVC_URL"))
 	opProxy := runtime.NewOperatorProxy(resolver)
 
+	// Insights pipeline (092) + weekly digest (093) + inline fact extractor.
+	// Создаётся ДО deps, чтобы передать insightsSvc как FactExtractor в NewAgent.
+	// Если провайдер недоступен — extractor остаётся noop, работоспособность сохраняется.
+	var insightsSvc *agentstore.InsightsService
+	var digestSvc *agentstore.DigestService
+	if cheap, err := buildProvider(envOr("INSIGHTS_PROVIDER", "yandex_gpt"), envOr("INSIGHTS_MODEL", "yandexgpt-lite")); err == nil {
+		model := envOr("INSIGHTS_MODEL", "yandexgpt-lite")
+		insightsSvc = agentstore.NewInsightsService(queries, cheap, model)
+		digestSvc = agentstore.NewDigestService(queries, cheap, model, makeNotifier(backendURL, jwtFactory))
+	} else {
+		slog.Warn("insights disabled (provider build failed)", "err", err)
+	}
+
 	deps := []runtime.AgentOption{
 		runtime.WithRecorder(recorder),
 		runtime.WithMemory(memory),
@@ -92,6 +105,11 @@ func main() {
 		runtime.WithFewShot(agentstore.NewFewShot(queries)),
 		// Retrieval: без этого rag по умолчанию noop и агент не использует базу знаний.
 		runtime.WithRAG(newRAGClient(envOr("RAG_URL", "http://sambacrm-agent-rag:8000"), jwtFactory)),
+	}
+	if insightsSvc != nil {
+		// Inline extractor: короткий проход дешёвой моделью после каждого user-message,
+		// чтобы вытащить факты, которые основной LLM мог пропустить.
+		deps = append(deps, runtime.WithExtractor(insightsSvc))
 	}
 
 	sink := api.NewSSEHub(rdb)
@@ -172,14 +190,10 @@ func main() {
 	// события агента). Без Redis web-доставка вернёт ошибку (как и сам SSE-чат).
 	opProxy.Register("web", api.NewWebSender(sink))
 
-	// Insights pipeline (092) + weekly digest (093): дешёвая модель + Asynq.
-	if cheap, err := buildProvider(envOr("INSIGHTS_PROVIDER", "yandex_gpt"), envOr("INSIGHTS_MODEL", "yandexgpt-lite")); err == nil {
-		model := envOr("INSIGHTS_MODEL", "yandexgpt-lite")
-		insightsSvc := agentstore.NewInsightsService(queries, cheap, model)
-		digestSvc := agentstore.NewDigestService(queries, cheap, model, makeNotifier(backendURL, jwtFactory))
+	// Asynq-воркеры для post-processing insights и weekly digest.
+	// Сами сервисы уже созданы выше (нужны для inline extractor в NewAgent).
+	if insightsSvc != nil && digestSvc != nil {
 		startInsights(ctx, insightsSvc, digestSvc, engine)
-	} else {
-		slog.Warn("insights disabled (provider build failed)", "err", err)
 	}
 
 	srv := api.NewServer(rt, pool, queries)

@@ -18,24 +18,26 @@ func WithMemory(m Memory) AgentOption              { return func(a *Agent) { a.m
 func WithTakeover(t TakeoverGate) AgentOption      { return func(a *Agent) { a.takeover = t } }
 func WithRecorder(r MessageRecorder) AgentOption   { return func(a *Agent) { a.recorder = r } }
 func WithFewShot(f FewShotStore) AgentOption       { return func(a *Agent) { a.fewShot = f } }
+func WithExtractor(e FactExtractor) AgentOption    { return func(a *Agent) { a.extractor = e } }
 func WithLogger(l *slog.Logger) AgentOption        { return func(a *Agent) { a.logger = l } }
 
 // NewAgent создаёт агента с дефолтными no-op зависимостями. Реальные адаптеры
 // подключаются опциями (см. шаги 038/039/03A–03E/03D).
 func NewAgent(cfg AgentConfig, provider llm.LLMProvider, opts ...AgentOption) *Agent {
 	a := &Agent{
-		cfg:      cfg,
-		provider: provider,
-		tools:    noopToolRegistry{},
-		rag:      noopRAG{},
-		pii:      noopPII{},
-		intake:   noopIntake{},
-		billing:  noopBilling{},
-		memory:   noopMemory{},
-		takeover: noopTakeover{},
-		recorder: noopRecorder{},
-		fewShot:  noopFewShot{},
-		logger:   slog.Default(),
+		cfg:       cfg,
+		provider:  provider,
+		tools:     noopToolRegistry{},
+		rag:       noopRAG{},
+		pii:       noopPII{},
+		intake:    noopIntake{},
+		billing:   noopBilling{},
+		memory:    noopMemory{},
+		takeover:  noopTakeover{},
+		recorder:  noopRecorder{},
+		fewShot:   noopFewShot{},
+		extractor: noopExtractor{},
+		logger:    slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(a)
