@@ -52,6 +52,48 @@ func validateAndNormalize(val string, fieldInfo *storage.AgentIntakeField) (stri
 	}
 }
 
+// salvageValue — «спасательный» захват, когда strict-нормализация (phone/email)
+// не смогла привести значение к каноничной форме. Задача — не терять данные,
+// если клиент написал контакт «по-своему»: странная группировка цифр, лишние
+// символы, номер без кода страны. Возвращает (значение_как_есть, true), если
+// ввод правдоподобно является контактом нужного типа; иначе (_, false) — тогда
+// вызывающий отклоняет значение и просит переспросить, как и раньше.
+//
+// Сохраняем сырой ввод (trim), а не «почищенный» — чтобы владелец/оператор
+// увидел ровно то, что прислал клиент, и мог сверить. Маску PII не спасаем.
+func salvageValue(val string, fieldInfo *storage.AgentIntakeField) (string, bool) {
+	if fieldInfo == nil {
+		return "", false
+	}
+	val = strings.TrimSpace(val)
+	if val == "" || isPIIMask(val) {
+		return "", false
+	}
+	switch strings.ToLower(strings.TrimSpace(fieldInfo.FieldType)) {
+	case "phone":
+		// ≥7 цифр — достаточный сигнал, что это телефон, пусть и «кривой».
+		if countDigits(val) >= 7 {
+			return val, true
+		}
+	case "email":
+		// Похоже на адрес: есть '@' и точка в доменной части после него.
+		if at := strings.IndexByte(val, '@'); at > 0 && strings.IndexByte(val[at:], '.') > 0 {
+			return val, true
+		}
+	}
+	return "", false
+}
+
+func countDigits(s string) int {
+	n := 0
+	for _, r := range s {
+		if unicode.IsDigit(r) {
+			n++
+		}
+	}
+	return n
+}
+
 // expectedFormat — человекочитаемая подсказка для промпта переспрашивания.
 func expectedFormat(fieldInfo *storage.AgentIntakeField) string {
 	if fieldInfo == nil {

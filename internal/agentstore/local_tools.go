@@ -53,17 +53,33 @@ func (r *DBToolRegistry) recordIntakeFact(ctx context.Context, ec runtime.ToolEx
 	// переспросить клиента (возврат ошибки, а не запись в БД).
 	rawStr := valueToString(args["value"])
 	normalized, verr := validateAndNormalize(rawStr, fieldInfo)
+
+	confidence := confidenceArg(args)
+	salvaged := false
 	if verr != nil {
-		out := map[string]any{
-			"error":  "value_invalid",
-			"field":  key,
-			"reason": verr.Error(),
-			"hint":   "переспроси клиента корректное значение в естественной форме, не показывай ему технические подробности",
+		// Спасательный захват: клиент написал контакт «по-своему», strict-формат
+		// не сошёлся. Не теряем данные и не гоняем клиента переписывать — пишем
+		// сырое значение с низкой уверенностью и пометкой «требует проверки».
+		// Задача агента — собрать данные, а не забраковать их из-за формата.
+		if raw, ok := salvageValue(rawStr, fieldInfo); ok {
+			normalized = raw
+			salvaged = true
+			confidence = 0.4
+			if excerpt == "" {
+				excerpt = "raw, требует проверки"
+			}
+		} else {
+			out := map[string]any{
+				"error":  "value_invalid",
+				"field":  key,
+				"reason": verr.Error(),
+				"hint":   "переспроси клиента корректное значение в естественной форме, не показывай ему технические подробности",
+			}
+			if fmt := expectedFormat(fieldInfo); fmt != "" {
+				out["expected_format"] = fmt
+			}
+			return out, nil
 		}
-		if fmt := expectedFormat(fieldInfo); fmt != "" {
-			out["expected_format"] = fmt
-		}
-		return out, nil
 	}
 	valueJSON, _ := json.Marshal(normalized)
 
@@ -80,7 +96,7 @@ func (r *DBToolRegistry) recordIntakeFact(ctx context.Context, ec runtime.ToolEx
 		IntakeFieldID:   fieldID,
 		FieldKey:        key,
 		FieldValue:      valueJSON,
-		Confidence:      toNumeric(confidenceArg(args)),
+		Confidence:      toNumeric(confidence),
 		SourceMessageID: toUUIDOrNull(ec.MessageID),
 		SourceExcerpt:   toText(excerpt),
 	}); err != nil {
@@ -88,11 +104,20 @@ func (r *DBToolRegistry) recordIntakeFact(ctx context.Context, ec runtime.ToolEx
 	}
 
 	remaining := r.remainingRequired(ctx, ec)
-	return map[string]any{
+	resp := map[string]any{
 		"status":             "recorded",
 		"normalized_value":   normalized,
 		"remaining_required": remaining,
-	}, nil
+	}
+	if salvaged {
+		// Модель должна знать: значение сохранено, но «сырое». Пусть мягко
+		// подтвердит его у клиента, но НЕ считает потерянным и не переспрашивает
+		// настойчиво.
+		resp["status"] = "recorded_unverified"
+		resp["note"] = "значение сохранено как есть — не удалось привести к стандартному формату. " +
+			"Мягко уточни у клиента, что записал верно, но не теряй его и не требуй переписать."
+	}
+	return resp, nil
 }
 
 func (r *DBToolRegistry) confirmIntakeFact(ctx context.Context, ec runtime.ToolExecCtx, args map[string]any) (map[string]any, error) {
