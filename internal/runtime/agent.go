@@ -162,7 +162,7 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 	if hasTool(tools, "sell_document") {
 		sellableDocs = a.cfg.SellableDocs
 	}
-	msgs := a.buildMessages(intakeBlock, chunks, fewShot, history, redactedUser, attach, userLang, sellableDocs, injection.Suspicious)
+	msgs := a.buildMessages(intakeBlock, chunks, fewShot, history, redactedUser, attach, userLang, sellableDocs, injection.Suspicious, redactionLog != nil)
 
 	maxIter := a.cfg.MaxIterations
 	if maxIter <= 0 {

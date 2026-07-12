@@ -14,14 +14,21 @@ import (
 // в последнем сообщении.
 func (a *Agent) buildMessages(intake string, chunks []RAGChunk, fewShot []FewShotExample,
 	history []llm.Message, userMsg string, attach []llm.Attachment, userLang string,
-	sellableDocs []SellableDoc, injectionSuspected bool) []llm.Message {
+	sellableDocs []SellableDoc, injectionSuspected bool, redactionApplied bool) []llm.Message {
 
 	var sys strings.Builder
 	sys.WriteString(a.cfg.Persona)
 	sys.WriteString("\n\n")
 
 	if intake != "" {
+		// В <intake> уже есть подблок <pii_masks> с объяснением масок.
 		sys.WriteString(intake)
+		sys.WriteString("\n\n")
+	} else if redactionApplied {
+		// Опросника нет, но PII-редактор что-то замаскировал в этом сообщении.
+		// Без объяснения модель принимает [PHONE]/[EMAIL] за «не смог распознать»
+		// и извиняется. Даём безусловную подсказку, что маска = данные получены.
+		sys.WriteString(renderPIIMasksNotice())
 		sys.WriteString("\n\n")
 	}
 
@@ -162,6 +169,24 @@ func renderIntakeBlock(fields []IntakeField, facts []Fact, prevFacts []PreviousF
 	b.WriteString("      • Настоящее значение сохранится автоматически, доп. tool-call не нужен.\n")
 	b.WriteString("  </pii_masks>\n")
 	b.WriteString("</intake>")
+	return b.String()
+}
+
+// renderPIIMasksNotice — безусловное объяснение PII-масок для агентов без
+// опросника. Когда <intake>-блок присутствует, тот же смысл несёт его подблок
+// <pii_masks> (с intake-специфичными деталями), поэтому здесь блок отдельный и
+// намеренно короткий. Цель одна: не дать модели принять [PHONE]/[EMAIL] за
+// «не смог распознать» и извиниться перед клиентом.
+func renderPIIMasksNotice() string {
+	var b strings.Builder
+	b.WriteString("<pii_masks>\n")
+	b.WriteString("  Если в сообщении клиента видишь маску [PHONE], [EMAIL], [CARD], [SNILS],\n")
+	b.WriteString("  [PASSPORT] или [INN] — это НЕ ошибка распознавания. Клиент прислал\n")
+	b.WriteString("  реальные данные, система замаскировала их для приватности, оригинал сохранён.\n")
+	b.WriteString("    • Считай данные ПОЛУЧЕННЫМИ — никогда не говори «не удалось распознать»;\n")
+	b.WriteString("    • НЕ проси клиента прислать это ещё раз;\n")
+	b.WriteString("    • Поблагодари и переходи к следующему шагу.\n")
+	b.WriteString("</pii_masks>")
 	return b.String()
 }
 
