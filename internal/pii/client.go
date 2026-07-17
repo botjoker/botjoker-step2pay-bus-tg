@@ -91,7 +91,9 @@ func toLog(entries []RedactionEntry) map[string]any {
 var (
 	reEmail = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
 	reCard  = regexp.MustCompile(`\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b`)
-	rePhone = regexp.MustCompile(`(\+7|8)[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2}`)
+	// Граница в конце и перед вариантом с 8 не даёт принять 11 цифр внутри
+	// более длинного идентификатора (например, 12-значного ИНН) за телефон.
+	rePhone = regexp.MustCompile(`(?:\+7[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2}|\b8[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2})\b`)
 	reSNILS = regexp.MustCompile(`\b\d{3}-\d{3}-\d{3} ?\d{2}\b`)
 	rePassp = regexp.MustCompile(`\b\d{4} \d{6}\b`) // паспорт пишут с пробелом; без пробела 10 цифр → ИНН
 	reINN   = regexp.MustCompile(`\b(\d{12}|\d{10})\b`)
@@ -105,12 +107,13 @@ func localRegexRedact(text string) (string, []RedactionEntry) {
 			return replacement
 		})
 	}
-	// email и телефон — первыми (содержат цифры, но однозначны).
+	// Более специфичные идентификаторы применяем до телефона, чтобы числовой
+	// идентификатор не превратился в контакт из-за пересечения шаблонов.
 	apply(reEmail, "email", "[EMAIL]")
 	apply(reCard, "card", "[CARD]")
-	apply(rePhone, "phone", "[PHONE]")
 	apply(reSNILS, "snils", "[SNILS]")
 	apply(rePassp, "passport", "[PASSPORT]")
 	apply(reINN, "inn", "[INN]")
+	apply(rePhone, "phone", "[PHONE]")
 	return text, log
 }

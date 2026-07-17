@@ -147,6 +147,7 @@ func (s *InsightsService) Process(ctx context.Context, convID uuid.UUID) error {
 	if err := json.Unmarshal([]byte(extractJSON(res.Content)), &ins); err != nil {
 		return fmt.Errorf("insights parse: %w", err)
 	}
+	normalizeExtractedContacts(&ins)
 
 	contactJSON := marshalJSON(ins.ContactExtracted)
 
@@ -270,12 +271,21 @@ func (s *InsightsService) writeFacts(ctx context.Context, conv storage.AgentConv
 			candidates[k] = v
 		}
 	}
+	fieldByKey := make(map[string]storage.AgentIntakeField, len(fields))
+	for _, f := range fields {
+		fieldByKey[f.FieldKey] = f
+	}
 	for k, v := range ins.IntakeExtracted {
 		if k = strings.TrimSpace(k); k == "" {
 			continue
 		}
-		if v = strings.TrimSpace(v); v != "" {
-			candidates[k] = v
+		field, ok := fieldByKey[k]
+		if !ok {
+			continue
+		}
+		normalized, err := validateAndNormalize(v, &field)
+		if err == nil && normalized != "" {
+			candidates[k] = normalized
 		}
 	}
 	if len(candidates) == 0 {
@@ -327,6 +337,32 @@ func (s *InsightsService) writeFacts(ctx context.Context, conv storage.AgentConv
 		}
 	}
 	return nil
+}
+
+// normalizeExtractedContacts не доверяет классификации дешёвой модели:
+// числовой идентификатор, ошибочно положенный в phone, не должен стать фактом
+// или контактом автоматически созданного лида.
+func normalizeExtractedContacts(ins *insightsJSON) {
+	if ins.ContactExtracted == nil {
+		return
+	}
+	if phone := strings.TrimSpace(ins.ContactExtracted["phone"]); phone != "" {
+		if normalized, err := normalizePhone(phone); err == nil {
+			ins.ContactExtracted["phone"] = normalized
+		} else {
+			delete(ins.ContactExtracted, "phone")
+		}
+	}
+	if email := strings.TrimSpace(ins.ContactExtracted["email"]); email != "" {
+		if normalized, err := normalizeEmail(email); err == nil {
+			ins.ContactExtracted["email"] = normalized
+		} else {
+			delete(ins.ContactExtracted, "email")
+		}
+	}
+	if name := strings.TrimSpace(ins.ContactExtracted["name"]); name != "" {
+		ins.ContactExtracted["name"] = name
+	}
 }
 
 func toNullBool(b *bool) pgtype.Bool {
