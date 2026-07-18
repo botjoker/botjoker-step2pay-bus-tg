@@ -89,14 +89,15 @@ func toLog(entries []RedactionEntry) map[string]any {
 
 // RU PII паттерны. Порядок применения важен (более специфичные — раньше).
 var (
-	reEmail = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
-	reCard  = regexp.MustCompile(`\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b`)
-	// Граница в конце и перед вариантом с 8 не даёт принять 11 цифр внутри
-	// более длинного идентификатора (например, 12-значного ИНН) за телефон.
-	rePhone = regexp.MustCompile(`(?:\+7[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2}|\b8[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2})\b`)
-	reSNILS = regexp.MustCompile(`\b\d{3}-\d{3}-\d{3} ?\d{2}\b`)
-	rePassp = regexp.MustCompile(`\b\d{4} \d{6}\b`) // паспорт пишут с пробелом; без пробела 10 цифр → ИНН
-	reINN   = regexp.MustCompile(`\b(\d{12}|\d{10})\b`)
+	reEmail       = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
+	reCard        = regexp.MustCompile(`\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b`)
+	rePhoneRU     = regexp.MustCompile(`(?:\+7[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2}|\b8[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2})\b`)
+	rePhoneDigits = regexp.MustCompile(`\b\d{10,15}\b`)
+	reSNILS       = regexp.MustCompile(`\b\d{3}-\d{3}-\d{3} ?\d{2}\b`)
+	rePassp       = regexp.MustCompile(`\b\d{4} \d{6}\b`)
+	// ИНН маскируем только при явной подписи. Первая группа сохраняет пробел
+	// или знак перед словом, вторая содержит только исходное значение ИНН.
+	reINN = regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}_])инн\s*[:№#-]?\s*(\d{10}|\d{12})\b`)
 )
 
 func localRegexRedact(text string) (string, []RedactionEntry) {
@@ -107,13 +108,26 @@ func localRegexRedact(text string) (string, []RedactionEntry) {
 			return replacement
 		})
 	}
+	applyINN := func() {
+		text = reINN.ReplaceAllStringFunc(text, func(match string) string {
+			parts := reINN.FindStringSubmatch(match)
+			if len(parts) != 3 {
+				return match
+			}
+			log = append(log, RedactionEntry{Type: "inn", Replacement: "[INN]", Original: parts[2]})
+			return parts[1] + "[INN]"
+		})
+	}
 	// Более специфичные идентификаторы применяем до телефона, чтобы числовой
-	// идентификатор не превратился в контакт из-за пересечения шаблонов.
+	// идентификатор с явной подписью не превратился в контакт.
 	apply(reEmail, "email", "[EMAIL]")
 	apply(reCard, "card", "[CARD]")
 	apply(reSNILS, "snils", "[SNILS]")
 	apply(rePassp, "passport", "[PASSPORT]")
-	apply(reINN, "inn", "[INN]")
-	apply(rePhone, "phone", "[PHONE]")
+	applyINN()
+	apply(rePhoneRU, "phone", "[PHONE]")
+	// Оставшиеся непрерывные последовательности телефонной длины считаем
+	// телефоном. В частности, это покрывает номер без +7/8 из формы или чата.
+	apply(rePhoneDigits, "phone", "[PHONE]")
 	return text, log
 }
