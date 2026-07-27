@@ -40,12 +40,13 @@ func (q *Queries) RecordPDConsent(ctx context.Context, arg RecordPDConsentParams
 		INSERT INTO agent_consents
 			(profile_id, conversation_id, template_id, consent_type,
 			 consent_version, consent_text_snapshot, granted, granted_at, user_agent)
-		SELECT $1, $2, $3, 'pd_processing', $4, $5, true, NOW(), NULLIF($6, '')
+		SELECT $1::uuid, $2::uuid, $3::uuid, 'pd_processing'::varchar(50),
+		       $4::varchar(20), $5::text, true, NOW(), NULLIF($6::text, '')
 		WHERE NOT EXISTS (
 			SELECT 1 FROM agent_consents
-			WHERE conversation_id = $2
+			WHERE conversation_id = $2::uuid
 			  AND consent_type = 'pd_processing'
-			  AND consent_version = $4
+			  AND consent_version = $4::varchar(20)
 			  AND granted = true
 			  AND revoked_at IS NULL
 		)`,
