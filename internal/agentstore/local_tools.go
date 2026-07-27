@@ -34,7 +34,7 @@ func (r *DBToolRegistry) execLocal(ctx context.Context, ec runtime.ToolExecCtx, 
 		return map[string]any{
 			"status":       "shown",
 			"ui_component": "intake_form",
-			"note":         "Форма показана отдельно от переписки. Не проси пользователя дублировать поля сообщением.",
+			"note":         "Интерфейс уже сообщил о сборе данных и показал форму отдельно от переписки. Не повторяй уведомление, не проси дублировать поля сообщением и не утверждай, что данные собраны, пока пользователь не отправил форму.",
 		}, nil
 	case "get_current_time":
 		return map[string]any{"now": time.Now().Format(time.RFC3339), "weekday": time.Now().Weekday().String()}, nil

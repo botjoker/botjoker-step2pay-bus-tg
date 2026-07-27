@@ -40,7 +40,7 @@
   }
   var uid = getUID();
 
-  var state = { open: false, token: null, streaming: false, messages: [], es: null, form: null };
+  var state = { open: false, token: null, streaming: false, messages: [], es: null, form: null, formNotice: "" };
 
   var root = document.createElement("div");
   document.body.appendChild(root);
@@ -106,6 +106,9 @@
         continue;
       }
       html += '<div class="scw-msg ' + cls + '">' + pre + esc(m.content) + "</div>";
+    }
+    if (state.formNotice) {
+      html += '<div class="scw-msg scw-ai scw-intake-notice">' + esc(state.formNotice) + '</div>';
     }
     if (state.form) html += renderForm(state.form);
     box.innerHTML = html;
@@ -273,6 +276,8 @@
           var last = state.messages[state.messages.length - 1];
           if (last && last.role === "assistant") { last.content += ev.text; renderMessages(); }
         } else if (ev.type === "tool_call" && ev.tool === "request_form") {
+          state.formNotice = ev.text || "Чтобы продолжить, нужно собрать данные. Заполните защищённую форму ниже: телефон и email не попадут в AI. Перед отправкой потребуется согласие на обработку персональных данных.";
+          renderMessages();
           loadForm();
         } else if (ev.type === "operator" && ev.text) {
           // Сообщение живого оператора (live takeover) — отдельным пузырём.
@@ -310,6 +315,7 @@
       ".scw-msg{margin-bottom:8px;padding:8px 12px;border-radius:12px;max-width:80%;word-wrap:break-word;white-space:pre-wrap}" +
       ".scw-user{background:" + c + ";color:#fff;margin-left:auto}" +
       ".scw-ai{background:#f3f4f6}" +
+      ".scw-intake-notice{max-width:100%;line-height:1.45}" +
       ".scw-op{border-left:3px solid " + c + "}" +
       ".scw-op-tag{display:block;font-size:11px;font-weight:600;color:" + c + ";margin-bottom:2px}" +
       ".scw-form{margin:12px 0;padding:14px;border:1px solid #d1d5db;border-radius:10px;background:#f9fafb;display:grid;gap:11px;font-size:14px}" +

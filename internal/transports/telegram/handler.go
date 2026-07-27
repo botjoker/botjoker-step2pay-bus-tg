@@ -69,10 +69,12 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 	}
 
 	var (
-		mu      sync.Mutex
-		acc     strings.Builder
-		formURL string
-		done    = make(chan struct{})
+		mu         sync.Mutex
+		editMu     sync.Mutex
+		acc        strings.Builder
+		formURL    string
+		formNotice string
+		done       = make(chan struct{})
 	)
 
 	// Промежуточные правки — чистым текстом (частичный Markdown в стриме ломал бы
@@ -81,14 +83,21 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 		mu.Lock()
 		text := acc.String()
 		secureFormURL := formURL
+		collectionNotice := formNotice
 		mu.Unlock()
-		if text == "" && (!final || secureFormURL == "") {
+		if secureFormURL != "" && collectionNotice != "" {
+			if text == "" {
+				text = collectionNotice
+			} else {
+				text = collectionNotice + "\n\n" + text
+			}
+		}
+		if text == "" {
 			return
 		}
+		editMu.Lock()
+		defer editMu.Unlock()
 		if final {
-			if text == "" {
-				text = "Чтобы продолжить, заполните данные в защищённой форме."
-			}
 			var markup *tele.ReplyMarkup
 			if secureFormURL != "" {
 				markup = &tele.ReplyMarkup{}
@@ -115,7 +124,13 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 			}
 			return
 		}
-		if _, err := bot.Edit(sent, clampTelegram(mdfmt.ToPlain(text))); err != nil {
+		if secureFormURL != "" {
+			markup := &tele.ReplyMarkup{}
+			markup.Inline(markup.Row(markup.URL("Заполнить данные", secureFormURL)))
+			if _, err := bot.Edit(sent, clampTelegram(mdfmt.ToPlain(text)), markup); err != nil {
+				slog.Debug("telegram: edit intake form", "err", err)
+			}
+		} else if _, err := bot.Edit(sent, clampTelegram(mdfmt.ToPlain(text))); err != nil {
 			slog.Debug("telegram: edit", "err", err)
 		}
 	}
@@ -145,7 +160,9 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 				if raw, ok := ev.ToolCall.Arguments["secure_form_url"].(string); ok && raw != "" {
 					mu.Lock()
 					formURL = raw
+					formNotice = ev.Text
 					mu.Unlock()
+					flush(false)
 				}
 			}
 		case llm.EventError:

@@ -24,6 +24,15 @@ type EventSink interface {
 	PublishEvent(ctx context.Context, convID uuid.UUID, evType, text, tool, errStr string) error
 }
 
+const intakeCollectionNotice = "Чтобы продолжить, нужно собрать данные. Заполните защищённую форму: ответы сохранятся отдельно от переписки, а телефон и email не попадут в AI. Перед отправкой потребуется согласие на обработку персональных данных."
+
+func addIntakeCollectionNotice(ev llm.StreamEvent) llm.StreamEvent {
+	if ev.Type == llm.EventToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "request_form" {
+		ev.Text = intakeCollectionNotice
+	}
+	return ev
+}
+
 // ProviderFactory строит LLM-провайдера и конфигурацию агента по agentID
 // (включая выбор модели и расшифровку tenant-креденшелов). Реализуется в
 // cmd/agent (зависит от AGENT_SECRETS_KEY и таблицы credentials).
@@ -372,6 +381,7 @@ func (e *Engine) RunConversation(ctx context.Context, convID uuid.UUID, text str
 	go func() {
 		defer close(out)
 		for ev := range raw {
+			ev = addIntakeCollectionNotice(ev)
 			if ev.Type == llm.EventToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "request_form" && e.formLink != nil {
 				// Не мутируем исходный tool-call: он дальше попадёт в контекст LLM.
 				// Защищённая ссылка предназначена только транспорту.
@@ -562,6 +572,7 @@ func (e *Engine) publish(ctx context.Context, convID uuid.UUID, ev llm.StreamEve
 	if e.sink == nil {
 		return
 	}
+	ev = addIntakeCollectionNotice(ev)
 	tool, errStr := "", ""
 	if ev.ToolCall != nil {
 		tool = ev.ToolCall.Name
