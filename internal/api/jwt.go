@@ -52,6 +52,11 @@ func IssueInternalToken(secret string, ttl time.Duration) (string, error) {
 	return issueJWT(secret, jwtClaims{Service: "agent", Scope: "tool-exec"}, ttl, time.Now())
 }
 
+// IssueIntakeToken выдаёт короткоживущий токен только для безопасной формы.
+func IssueIntakeToken(secret string, conversationID string, ttl time.Duration) (string, error) {
+	return issueJWT(secret, jwtClaims{ConversationID: conversationID, Scope: "intake-form"}, ttl, time.Now())
+}
+
 var errInvalidToken = errors.New("invalid token")
 
 // verifyJWT проверяет подпись и срок, возвращает claims.

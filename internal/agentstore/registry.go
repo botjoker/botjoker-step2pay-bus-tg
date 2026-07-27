@@ -44,7 +44,7 @@ func (r *DBToolRegistry) SchemasFor(ctx context.Context, agentID uuid.UUID) ([]l
 	// без них record_intake_fact не подаётся модели и факты не собираются,
 	// хотя <intake> в промпте просит их записывать.
 	if fields, ferr := r.q.ListIntakeFields(ctx, toUUID(agentID)); ferr == nil && len(fields) > 0 {
-		for _, name := range []string{"record_intake_fact", "confirm_intake_fact", "get_intake_status"} {
+		for _, name := range []string{"record_intake_fact", "confirm_intake_fact", "get_intake_status", "request_form"} {
 			if seen[name] {
 				continue
 			}

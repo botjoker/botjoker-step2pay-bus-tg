@@ -5,6 +5,7 @@ package vk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -107,12 +108,25 @@ func (m *Manager) SendToConversation(ctx context.Context, _ uuid.UUID, channelID
 
 // sendMessage отправляет сообщение через messages.send.
 func (m *Manager) sendMessage(ctx context.Context, ch Channel, peerID int64, text string) error {
+	return m.sendMessageWithForm(ctx, ch, peerID, text, "")
+}
+
+func (m *Manager) sendMessageWithForm(ctx context.Context, ch Channel, peerID int64, text, formURL string) error {
 	form := url.Values{
 		"access_token": {ch.AccessToken},
 		"v":            {vkAPIVersion},
 		"peer_id":      {strconv.FormatInt(peerID, 10)},
 		"message":      {clampVK(mdfmt.ToPlain(text))},
 		"random_id":    {strconv.FormatInt(time.Now().UnixNano()&0x7fffffff, 10)},
+	}
+	if formURL != "" {
+		keyboard, _ := json.Marshal(map[string]any{
+			"inline": true,
+			"buttons": []any{[]any{map[string]any{
+				"action": map[string]any{"type": "open_link", "link": formURL, "label": "Заполнить данные"},
+			}}},
+		})
+		form.Set("keyboard", string(keyboard))
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.apiBase+"/messages.send",
 		nil)

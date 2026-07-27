@@ -232,9 +232,15 @@ func parseEnumOptions(raw []byte) []string {
 	// Попытка 2: массив объектов [{"value":"a","label":"..."}] или {"options":[...]}.
 	var wrap struct {
 		Options []json.RawMessage `json:"options"`
+		Choices []json.RawMessage `json:"choices"`
 	}
-	if err := json.Unmarshal(raw, &wrap); err == nil && len(wrap.Options) > 0 {
-		return rawMessagesToStrings(wrap.Options)
+	if err := json.Unmarshal(raw, &wrap); err == nil {
+		if len(wrap.Options) > 0 {
+			return rawMessagesToStrings(wrap.Options)
+		}
+		if len(wrap.Choices) > 0 {
+			return rawMessagesToStrings(wrap.Choices)
+		}
 	}
 	var direct []json.RawMessage
 	if err := json.Unmarshal(raw, &direct); err == nil && len(direct) > 0 {

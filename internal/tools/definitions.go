@@ -24,6 +24,7 @@ var LocalToolNames = map[string]bool{
 	"record_intake_fact":  true,
 	"confirm_intake_fact": true,
 	"get_intake_status":   true,
+	"request_form":        true,
 	"get_current_time":    true,
 	"cite_source":         true,
 }
@@ -108,11 +109,10 @@ var Definitions = map[string]llm.ToolDef{
 		}, "reason"),
 	},
 	"request_form": {
-		Name:        "request_form",
-		Description: "Запросить у пользователя структурированную форму (например, заявку).",
-		Schema: obj(map[string]any{
-			"form_key": str("Ключ формы"),
-		}, "form_key"),
+		Name: "request_form",
+		Description: "Показать пользователю безопасную форму со всеми ещё не собранными полями опросника. " +
+			"Вызывай вместо просьбы написать эти данные сообщением. Поля и их типы определяет система, аргументы не нужны.",
+		Schema: obj(map[string]any{}),
 	},
 	"cite_source": {
 		Name:        "cite_source",

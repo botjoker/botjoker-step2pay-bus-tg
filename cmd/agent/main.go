@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -139,6 +141,15 @@ func main() {
 
 	engine := agentstore.NewEngine(queries, sink, providerFactory, ingest, opProxy, deps...)
 	engine.SetSecretsKey(agentSecretsKey) // ключ для расшифровки токенов каналов (F01)
+	if publicURL := strings.TrimRight(envOr("AGENT_PUBLIC_URL", ""), "/"); publicURL != "" {
+		engine.SetIntakeFormLink(func(convID uuid.UUID) string {
+			token, err := api.IssueIntakeToken(internalSecret, convID.String(), 30*time.Minute)
+			if err != nil {
+				return ""
+			}
+			return publicURL + "/chat/intake?token=" + url.QueryEscape(token)
+		})
+	}
 
 	// Telegram-транспорт: запускаем ботов активных каналов + регистрируем в op-proxy.
 	tgManager := telegram.NewManager(engine)

@@ -69,9 +69,10 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 	}
 
 	var (
-		mu   sync.Mutex
-		acc  strings.Builder
-		done = make(chan struct{})
+		mu      sync.Mutex
+		acc     strings.Builder
+		formURL string
+		done    = make(chan struct{})
 	)
 
 	// Промежуточные правки — чистым текстом (частичный Markdown в стриме ломал бы
@@ -79,15 +80,36 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 	flush := func(final bool) {
 		mu.Lock()
 		text := acc.String()
+		secureFormURL := formURL
 		mu.Unlock()
-		if text == "" {
+		if text == "" && (!final || secureFormURL == "") {
 			return
 		}
 		if final {
+			if text == "" {
+				text = "Чтобы продолжить, заполните данные в защищённой форме."
+			}
+			var markup *tele.ReplyMarkup
+			if secureFormURL != "" {
+				markup = &tele.ReplyMarkup{}
+				markup.Inline(markup.Row(markup.URL("Заполнить данные", secureFormURL)))
+			}
 			htmlText := mdfmt.ToTelegramHTML(clampTelegram(text))
-			if _, err := bot.Edit(sent, htmlText, tele.ModeHTML); err != nil {
+			var err error
+			if markup != nil {
+				_, err = bot.Edit(sent, htmlText, markup, tele.ModeHTML)
+			} else {
+				_, err = bot.Edit(sent, htmlText, tele.ModeHTML)
+			}
+			if err != nil {
 				slog.Debug("telegram: edit html, fallback to plain", "err", err)
-				if _, err2 := bot.Edit(sent, clampTelegram(mdfmt.ToPlain(text))); err2 != nil {
+				var err2 error
+				if markup != nil {
+					_, err2 = bot.Edit(sent, clampTelegram(mdfmt.ToPlain(text)), markup)
+				} else {
+					_, err2 = bot.Edit(sent, clampTelegram(mdfmt.ToPlain(text)))
+				}
+				if err2 != nil {
 					slog.Debug("telegram: edit plain", "err", err2)
 				}
 			}
@@ -118,6 +140,14 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 			mu.Lock()
 			acc.WriteString(ev.Text)
 			mu.Unlock()
+		case llm.EventToolCall:
+			if ev.ToolCall != nil && ev.ToolCall.Name == "request_form" {
+				if raw, ok := ev.ToolCall.Arguments["secure_form_url"].(string); ok && raw != "" {
+					mu.Lock()
+					formURL = raw
+					mu.Unlock()
+				}
+			}
 		case llm.EventError:
 			mu.Lock()
 			acc.WriteString("\n\n_(ошибка генерации)_")

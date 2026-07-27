@@ -93,6 +93,10 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /chat/sse", s.handleSSE)
 	mux.HandleFunc("GET /chat/history", s.handleChatHistory)
 	mux.HandleFunc("POST /chat/message", s.handleChatMessage)
+	mux.HandleFunc("GET /chat/intake-form", s.handleChatIntakeForm)
+	mux.HandleFunc("POST /chat/intake-form", s.handleChatIntakeSubmit)
+	mux.HandleFunc("GET /chat/intake", s.handleChatIntakePage)
+	mux.HandleFunc("GET /chat/privacy", s.handleChatPrivacyPage)
 
 	// Internal (internal-JWT).
 	mux.HandleFunc("POST /internal/test", s.internalJWTRequired(s.handleInternalTest))

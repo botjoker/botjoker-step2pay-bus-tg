@@ -2,7 +2,9 @@ package agentstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -41,6 +43,7 @@ type Engine struct {
 
 	secretsKey string                                      // AGENT_SECRETS_KEY для расшифровки токенов каналов
 	postTurn   func(ctx context.Context, convID uuid.UUID) // дебаунс-триггер insights после хода
+	formLink   func(convID uuid.UUID) string
 }
 
 // SetSecretsKey задаёт AGENT_SECRETS_KEY для расшифровки токенов каналов.
@@ -49,6 +52,9 @@ func (e *Engine) SetSecretsKey(key string) { e.secretsKey = key }
 // SetPostTurn регистрирует колбэк, вызываемый после завершения хода реального
 // диалога (не playground). Используется для дебаунс-постановки insights-задачи.
 func (e *Engine) SetPostTurn(fn func(ctx context.Context, convID uuid.UUID)) { e.postTurn = fn }
+
+// SetIntakeFormLink подключает channel-neutral генератор защищённой ссылки.
+func (e *Engine) SetIntakeFormLink(fn func(convID uuid.UUID) string) { e.formLink = fn }
 
 // firePostTurn безопасно вызывает postTurn-колбэк, если он задан.
 func (e *Engine) firePostTurn(ctx context.Context, convID uuid.UUID) {
@@ -134,6 +140,176 @@ func (e *Engine) HandleMessage(ctx context.Context, conversationID uuid.UUID, te
 	return nil
 }
 
+// IntakeForm строится только из tenant-owned схемы и фактов текущего диалога.
+func (e *Engine) IntakeForm(ctx context.Context, conversationID uuid.UUID) ([]api.IntakeFormField, error) {
+	conv, err := e.q.GetAgentConversation(ctx, toUUID(conversationID))
+	if err != nil {
+		return nil, err
+	}
+	fields, err := e.q.ListIntakeFields(ctx, conv.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	facts, err := e.q.ListConversationFacts(ctx, conv.ID)
+	if err != nil {
+		return nil, err
+	}
+	have := make(map[string]bool, len(facts))
+	for _, fact := range facts {
+		have[fact.FieldKey] = true
+	}
+	out := make([]api.IntakeFormField, 0, len(fields))
+	for _, field := range fields {
+		if have[field.FieldKey] {
+			continue
+		}
+		out = append(out, api.IntakeFormField{
+			Key:      field.FieldKey,
+			Label:    field.FieldLabel,
+			Type:     field.FieldType,
+			Required: field.IsRequired,
+			Why:      fromText(field.WhyWeAsk),
+			Options:  parseEnumOptions(field.FieldOptions),
+		})
+	}
+	return out, nil
+}
+
+// ConsentDocument возвращает tenant-specific редакцию или безопасный fallback.
+func (e *Engine) ConsentDocument(ctx context.Context, conversationID uuid.UUID) (api.ConsentDocument, error) {
+	conv, err := e.q.GetAgentConversation(ctx, toUUID(conversationID))
+	if err != nil {
+		return api.ConsentDocument{}, err
+	}
+	template, err := e.q.ActivePDConsentTemplate(ctx, conv.ProfileID)
+	if err == nil {
+		return api.ConsentDocument{
+			Title:      template.Title,
+			Body:       template.BodyMd,
+			Version:    template.Version,
+			TemplateID: fromUUID(template.ID),
+		}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return api.ConsentDocument{}, err
+	}
+	return api.ConsentDocument{
+		Title:   "Согласие на обработку персональных данных",
+		Version: "pd-processing-v1",
+		Body: "Я свободно, своей волей и в своём интересе даю согласие на обработку предоставленных мной персональных данных для обработки обращения, обратной связи и оказания запрошенных услуг.\n\n" +
+			"Обработка может включать сбор, запись, систематизацию, хранение, уточнение, использование и удаление данных. Согласие действует до достижения целей обработки или его отзыва. Отозвать согласие можно, обратившись к владельцу сервиса.",
+	}, nil
+}
+
+// SubmitIntake валидирует весь payload и фиксирует явное согласие. Контактные
+// значения сохраняются в БД и не превращаются в user-message или LLM prompt.
+func (e *Engine) SubmitIntake(ctx context.Context, conversationID uuid.UUID, submission api.IntakeSubmission) error {
+	values := submission.Values
+	if !submission.ConsentGranted {
+		return &api.IntakeValidationError{Message: "подтвердите согласие на обработку персональных данных"}
+	}
+	if len(values) > 100 {
+		return &api.IntakeValidationError{Message: "слишком много полей"}
+	}
+	conv, err := e.q.GetAgentConversation(ctx, toUUID(conversationID))
+	if err != nil {
+		return err
+	}
+	fields, err := e.q.ListIntakeFields(ctx, conv.AgentID)
+	if err != nil {
+		return err
+	}
+	existingFacts, err := e.q.ListConversationFacts(ctx, conv.ID)
+	if err != nil {
+		return err
+	}
+	have := make(map[string]bool, len(existingFacts))
+	for _, fact := range existingFacts {
+		have[fact.FieldKey] = true
+	}
+	byKey := make(map[string]storage.AgentIntakeField, len(fields))
+	for _, field := range fields {
+		byKey[field.FieldKey] = field
+	}
+	type normalizedValue struct {
+		field storage.AgentIntakeField
+		value string
+	}
+	normalized := make([]normalizedValue, 0, len(values))
+	for key, raw := range values {
+		field, ok := byKey[key]
+		if !ok {
+			return &api.IntakeValidationError{Message: fmt.Sprintf("неизвестное поле: %s", key)}
+		}
+		if have[key] {
+			continue // устаревшая/повторно открытая форма не перезаписывает факт
+		}
+		rawValue := valueToString(raw)
+		if strings.TrimSpace(rawValue) == "" && !field.IsRequired {
+			continue
+		}
+		value, validationErr := validateAndNormalize(rawValue, &field)
+		if validationErr != nil {
+			return &api.IntakeValidationError{Message: fmt.Sprintf("%s: %s", field.FieldLabel, validationErr)}
+		}
+		normalized = append(normalized, normalizedValue{field: field, value: value})
+	}
+	for _, field := range fields {
+		if !field.IsRequired || have[field.FieldKey] {
+			continue
+		}
+		if _, submitted := values[field.FieldKey]; submitted {
+			continue
+		}
+		return &api.IntakeValidationError{Message: fmt.Sprintf("заполните обязательное поле: %s", field.FieldLabel)}
+	}
+	for _, item := range normalized {
+		valueJSON, marshalErr := json.Marshal(item.value)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if err := e.q.DeactivateActiveFact(ctx, storage.DeactivateActiveFactParams{
+			ConversationID: conv.ID,
+			FieldKey:       item.field.FieldKey,
+		}); err != nil {
+			return err
+		}
+		if _, err := e.q.InsertConversationFact(ctx, storage.InsertConversationFactParams{
+			ProfileID:       conv.ProfileID,
+			ConversationID:  conv.ID,
+			IntakeFieldID:   item.field.ID,
+			FieldKey:        item.field.FieldKey,
+			FieldValue:      valueJSON,
+			Confidence:      toNumeric(1),
+			SourceMessageID: pgtype.UUID{},
+			SourceExcerpt:   toText("secure form"),
+		}); err != nil {
+			return err
+		}
+		if err := e.q.VerifyFact(ctx, storage.VerifyFactParams{
+			ConversationID: conv.ID,
+			FieldKey:       item.field.FieldKey,
+		}); err != nil {
+			return err
+		}
+	}
+	consent, err := e.ConsentDocument(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	if err := e.q.RecordPDConsent(ctx, storage.RecordPDConsentParams{
+		ProfileID:      conv.ProfileID,
+		ConversationID: conv.ID,
+		TemplateID:     toUUIDOrNull(consent.TemplateID),
+		Version:        consent.Version,
+		TextSnapshot:   consent.Body,
+		UserAgent:      submission.UserAgent,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Test — playground: возвращает канал событий напрямую (api стримит его в SSE).
 func (e *Engine) Test(ctx context.Context, agentID uuid.UUID, message string) (<-chan llm.StreamEvent, error) {
 	agent, err := e.buildAgent(ctx, agentID)
@@ -189,18 +365,29 @@ func (e *Engine) RunConversation(ctx context.Context, convID uuid.UUID, text str
 	if err != nil {
 		return nil, err
 	}
-	if e.postTurn == nil {
-		return raw, nil
-	}
-	// Прокладка: форвардим события и по завершении хода дёргаем postTurn-триггер.
+	// Прокладка: добавляем ссылку к request_form для TG/VK и по завершении хода
+	// дёргаем postTurn-триггер. Сама ссылка генерируется без участия LLM.
 	// Контекст хода может отмениться после стрима — для триггера берём фоновый.
 	out := make(chan llm.StreamEvent, 32)
 	go func() {
 		defer close(out)
 		for ev := range raw {
+			if ev.Type == llm.EventToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "request_form" && e.formLink != nil {
+				// Не мутируем исходный tool-call: он дальше попадёт в контекст LLM.
+				// Защищённая ссылка предназначена только транспорту.
+				transportCall := *ev.ToolCall
+				transportCall.Arguments = make(map[string]any, len(ev.ToolCall.Arguments)+1)
+				for key, value := range ev.ToolCall.Arguments {
+					transportCall.Arguments[key] = value
+				}
+				transportCall.Arguments["secure_form_url"] = e.formLink(convID)
+				ev.ToolCall = &transportCall
+			}
 			out <- ev
 		}
-		e.firePostTurn(context.Background(), convID)
+		if e.postTurn != nil {
+			e.firePostTurn(context.Background(), convID)
+		}
 	}()
 	return out, nil
 }

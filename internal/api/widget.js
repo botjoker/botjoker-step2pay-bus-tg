@@ -40,7 +40,7 @@
   }
   var uid = getUID();
 
-  var state = { open: false, token: null, streaming: false, messages: [], es: null };
+  var state = { open: false, token: null, streaming: false, messages: [], es: null, form: null };
 
   var root = document.createElement("div");
   document.body.appendChild(root);
@@ -107,8 +107,111 @@
       }
       html += '<div class="scw-msg ' + cls + '">' + pre + esc(m.content) + "</div>";
     }
+    if (state.form) html += renderForm(state.form);
     box.innerHTML = html;
+    bindForm();
     box.scrollTop = box.scrollHeight;
+  }
+
+  function renderForm(form) {
+    if (form.saved) {
+      return '<div class="scw-form scw-form-saved"><strong>Данные сохранены</strong>' +
+        '<span>Телефон и email не отправлялись AI-помощнику.</span></div>';
+    }
+    var html = '<form class="scw-form"><strong>Заполните данные</strong>' +
+      '<span class="scw-form-note">Ответы сохранятся отдельно от переписки. Телефон и email не попадут в AI.</span>';
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      var value = form.values[f.key] == null ? "" : String(form.values[f.key]);
+      html += '<label><span>' + esc(f.label) + (f.required ? ' <b aria-hidden="true">*</b>' : '') + '</span>';
+      if (f.type === "multiline") {
+        html += '<textarea data-field="' + esc(f.key) + '"' + (f.required ? " required" : "") + '>' + esc(value) + '</textarea>';
+      } else if (f.type === "enum") {
+        html += '<select data-field="' + esc(f.key) + '"' + (f.required ? " required" : "") + '><option value="">Выберите</option>';
+        for (var j = 0; j < (f.options || []).length; j++) {
+          var option = String(f.options[j]);
+          html += '<option value="' + esc(option) + '"' + (option === value ? " selected" : "") + '>' + esc(option) + '</option>';
+        }
+        html += '</select>';
+      } else if (f.type === "boolean") {
+        html += '<select data-field="' + esc(f.key) + '"' + (f.required ? " required" : "") + '><option value="">Выберите</option>' +
+          '<option value="true"' + (value === "true" ? " selected" : "") + '>Да</option>' +
+          '<option value="false"' + (value === "false" ? " selected" : "") + '>Нет</option></select>';
+      } else {
+        var type = f.type === "phone" ? "tel" : f.type === "email" ? "email" : f.type === "number" ? "number" : f.type === "date" ? "date" : "text";
+        html += '<input data-field="' + esc(f.key) + '" type="' + type + '" value="' + esc(value) + '"' + (f.required ? " required" : "") + ' />';
+      }
+      if (f.why) html += '<small>' + esc(f.why) + '</small>';
+      html += '</label>';
+    }
+    var privacyURL = form.consent && form.consent.privacy_url
+      ? new URL(form.consent.privacy_url, new URL(apiBase, window.location.href)).href
+      : "";
+    html += '<label class="scw-consent"><input class="scw-consent-check" type="checkbox" required' +
+      (form.consentGranted ? " checked" : "") + '><span>Предоставляя свои контактные данные, я даю согласие на их обработку' +
+      (privacyURL ? ' в соответствии с <a href="' + esc(privacyURL) + '" target="_blank" rel="noopener noreferrer">политикой конфиденциальности</a>' : '') +
+      '.</span></label>';
+    if (form.error) html += '<span class="scw-form-error" role="alert">' + esc(form.error) + '</span>';
+    html += '<button type="submit"' + (form.submitting ? " disabled" : "") + '>' + (form.submitting ? "Сохраняем…" : "Сохранить") + '</button></form>';
+    return html;
+  }
+
+  function bindForm() {
+    var formEl = shadow.querySelector(".scw-form:not(.scw-form-saved)");
+    if (!formEl || !state.form) return;
+    var controls = formEl.querySelectorAll("[data-field]");
+    for (var i = 0; i < controls.length; i++) {
+      controls[i].oninput = function (e) { state.form.values[e.target.dataset.field] = e.target.value; };
+    }
+    var consent = formEl.querySelector(".scw-consent-check");
+    if (consent) consent.onchange = function (e) { state.form.consentGranted = e.target.checked; };
+    formEl.onsubmit = function (e) {
+      e.preventDefault();
+      if (!formEl.reportValidity() || state.form.submitting) return;
+      submitForm();
+    };
+  }
+
+  function loadForm() {
+    ensureSession().then(function (token) {
+      if (!token) return;
+      fetch(apiBase + "/chat/intake-form?token=" + encodeURIComponent(token))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data || !data.fields || !data.fields.length) return;
+          state.form = { fields: data.fields, consent: data.consent, consentGranted: false, values: {}, submitting: false, error: "", saved: false };
+          renderMessages();
+        });
+    });
+  }
+
+  function submitForm() {
+    state.form.submitting = true;
+    state.form.error = "";
+    renderMessages();
+    var values = {};
+    for (var i = 0; i < state.form.fields.length; i++) {
+      var f = state.form.fields[i];
+      var value = state.form.values[f.key];
+      if (value !== undefined && value !== "") values[f.key] = value;
+    }
+    fetch(apiBase + "/chat/intake-form", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: state.token, values: values, consent_granted: state.form.consentGranted })
+    }).then(function (r) {
+      if (r.ok) return null;
+      return r.json().then(function (body) { return body.error || "Не удалось сохранить данные"; });
+    }).then(function (error) {
+      state.form.submitting = false;
+      state.form.error = error || "";
+      state.form.saved = !error;
+      renderMessages();
+    }).catch(function () {
+      state.form.submitting = false;
+      state.form.error = "Не удалось сохранить данные";
+      renderMessages();
+    });
   }
 
   function sendMessage(text) {
@@ -169,6 +272,8 @@
         if (ev.type === "text" && ev.text) {
           var last = state.messages[state.messages.length - 1];
           if (last && last.role === "assistant") { last.content += ev.text; renderMessages(); }
+        } else if (ev.type === "tool_call" && ev.tool === "request_form") {
+          loadForm();
         } else if (ev.type === "operator" && ev.text) {
           // Сообщение живого оператора (live takeover) — отдельным пузырём.
           state.messages.push({ role: "operator", content: ev.text });
@@ -207,9 +312,18 @@
       ".scw-ai{background:#f3f4f6}" +
       ".scw-op{border-left:3px solid " + c + "}" +
       ".scw-op-tag{display:block;font-size:11px;font-weight:600;color:" + c + ";margin-bottom:2px}" +
+      ".scw-form{margin:12px 0;padding:14px;border:1px solid #d1d5db;border-radius:10px;background:#f9fafb;display:grid;gap:11px;font-size:14px}" +
+      ".scw-form>strong{font-size:15px}.scw-form-note,.scw-form-saved span{font-size:12px;line-height:1.4;color:#4b5563}" +
+      ".scw-form label{display:grid;gap:5px}.scw-form label>span{font-weight:500}.scw-form b{color:#b91c1c}" +
+      ".scw-form input,.scw-form textarea,.scw-form select{box-sizing:border-box;width:100%;border:1px solid #9ca3af;border-radius:6px;background:#fff;padding:9px;font:inherit;color:#111827}" +
+      ".scw-form textarea{min-height:72px;resize:vertical}.scw-form small{color:#6b7280}.scw-form-error{font-size:12px;color:#b91c1c}" +
+      ".scw-consent{display:flex!important;grid-template-columns:none!important;align-items:flex-start;gap:8px!important;font-weight:400!important;font-size:12px;line-height:1.45;color:#4b5563}.scw-consent input{width:17px!important;height:17px;margin:1px 0 0;padding:0;flex:none}.scw-consent a{color:" + c + ";text-decoration:underline}" +
+      ".scw-form button{justify-self:start;background:" + c + ";color:#fff;border:0;border-radius:6px;padding:9px 14px;font-weight:600;cursor:pointer}.scw-form button:disabled{opacity:.6;cursor:default}" +
+      ".scw-form-saved{background:#f0fdf4;border-color:#86efac}.scw-form-saved strong{color:#166534}" +
       ".scw-row{display:flex;padding:12px;border-top:1px solid #e5e7eb;gap:8px}" +
       ".scw-row input{flex:1;border:1px solid #d1d5db;border-radius:6px;padding:8px}" +
-      ".scw-row button{background:" + c + ";color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer}"
+      ".scw-row button{background:" + c + ";color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer}" +
+      "@media(max-width:420px){.scw-window{left:12px!important;right:12px!important;bottom:82px;width:auto;height:min(620px,calc(100vh - 100px));max-height:none}.scw-bubble{bottom:16px}}"
     );
   }
 

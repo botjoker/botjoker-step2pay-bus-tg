@@ -387,13 +387,9 @@ func roleLabel(role string) string {
 	}
 }
 
-// messageBodyForInsights возвращает исходный текст сообщения (content_original)
-// если он есть, иначе — редактированный content. Обеспечивает извлечение
-// реальных телефонов/email в insights/writeFacts.
+// messageBodyForInsights всегда возвращает редактированный content. Исходный
+// текст может содержать контакты и не должен уходить во вторичную LLM.
 func messageBodyForInsights(m storage.AgentMessage) string {
-	if orig := fromText(m.ContentOriginal); strings.TrimSpace(orig) != "" {
-		return orig
-	}
 	return fromText(m.Content)
 }
 

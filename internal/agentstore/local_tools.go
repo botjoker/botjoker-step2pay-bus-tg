@@ -3,6 +3,7 @@ package agentstore
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/botjoker/sambacrm-business-tg/internal/runtime"
@@ -20,6 +21,21 @@ func (r *DBToolRegistry) execLocal(ctx context.Context, ec runtime.ToolExecCtx, 
 		return r.confirmIntakeFact(ctx, ec, args)
 	case "get_intake_status":
 		return r.getIntakeStatus(ctx, ec)
+	case "request_form":
+		status, err := r.getIntakeStatus(ctx, ec)
+		if err != nil {
+			return nil, err
+		}
+		missingRequired, _ := status["missing_required"].([]string)
+		missingOptional, _ := status["missing_optional"].([]string)
+		if len(missingRequired)+len(missingOptional) == 0 {
+			return map[string]any{"status": "already_completed"}, nil
+		}
+		return map[string]any{
+			"status":       "shown",
+			"ui_component": "intake_form",
+			"note":         "Форма показана отдельно от переписки. Не проси пользователя дублировать поля сообщением.",
+		}, nil
 	case "get_current_time":
 		return map[string]any{"now": time.Now().Format(time.RFC3339), "weekday": time.Now().Weekday().String()}, nil
 	case "cite_source":
@@ -104,9 +120,18 @@ func (r *DBToolRegistry) recordIntakeFact(ctx context.Context, ec runtime.ToolEx
 	}
 
 	remaining := r.remainingRequired(ctx, ec)
+	responseValue := normalized
+	if fieldInfo != nil {
+		switch strings.ToLower(strings.TrimSpace(fieldInfo.FieldType)) {
+		case "phone":
+			responseValue = "[PHONE]"
+		case "email":
+			responseValue = "[EMAIL]"
+		}
+	}
 	resp := map[string]any{
 		"status":             "recorded",
-		"normalized_value":   normalized,
+		"normalized_value":   responseValue,
 		"remaining_required": remaining,
 	}
 	if salvaged {
@@ -144,8 +169,19 @@ func (r *DBToolRegistry) getIntakeStatus(ctx context.Context, ec runtime.ToolExe
 		return nil, err
 	}
 	collected := map[string]string{}
+	fieldTypes := make(map[string]string, len(fields))
+	for _, field := range fields {
+		fieldTypes[field.FieldKey] = strings.ToLower(strings.TrimSpace(field.FieldType))
+	}
 	for _, f := range facts {
-		collected[f.FieldKey] = jsonbToString(f.FieldValue)
+		value := jsonbToString(f.FieldValue)
+		switch fieldTypes[f.FieldKey] {
+		case "phone":
+			value = "[PHONE]"
+		case "email":
+			value = "[EMAIL]"
+		}
+		collected[f.FieldKey] = value
 	}
 	var missingRequired, missingOptional []string
 	for _, f := range fields {

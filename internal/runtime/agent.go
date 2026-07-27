@@ -58,7 +58,11 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 	// 1. PII-редакция входящего.
 	redactedUser, redactionLog, err := a.pii.Redact(ctx, req.UserMessage)
 	if err != nil {
-		redactedUser = req.UserMessage // fail-open: не теряем сообщение
+		// Контакты и другие PII нельзя передавать модели даже при отказе
+		// редактора. Ошибка безопаснее пропущенного сообщения.
+		a.logger.Error("pii redaction failed", "conversation", convID, "err", err)
+		a.emitText(out, "Не удалось безопасно обработать сообщение. Попробуйте ещё раз.")
+		return
 	}
 
 	// 1a. Prompt-injection эвристика. Не блокируем сообщение — лишь помечаем,
@@ -130,7 +134,7 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 		chunks, _ = a.rag.Search(ctx, RAGSearchRequest{
 			ProfileID: a.cfg.ProfileID,
 			AgentID:   a.cfg.AgentID,
-			Query:     req.UserMessage,
+			Query:     redactedUser,
 			TopK:      topK,
 			MinScore:  a.cfg.RagMinScore,
 		})
