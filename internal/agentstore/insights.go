@@ -188,77 +188,14 @@ func (s *InsightsService) Process(ctx context.Context, convID uuid.UUID) error {
 // и диалог «горячий» (есть телефон ИЛИ primary_intent=purchase_intent) и лид ещё не
 // привязан. Дедуп по телефону: привязывает диалог к существующему открытому лиду.
 func (s *InsightsService) maybeAutoCreateLead(ctx context.Context, conv storage.AgentConversation, ins insightsJSON) error {
-	auto, err := s.q.GetAgentAutoCreateLead(ctx, conv.AgentID)
-	if err != nil || !auto {
-		return err
-	}
-	if conv.LeadID.Valid {
-		return nil // уже привязан
-	}
-
-	// «горячий» = есть телефон ИЛИ покупательский интент.
-	phone := strings.TrimSpace(ins.ContactExtracted["phone"])
-	if phone == "" && ins.PrimaryIntent != "purchase_intent" {
-		return nil
-	}
-
-	// Дедуп: при наличии телефона привязываем к существующему открытому лиду.
-	if phone != "" {
-		existing, derr := s.q.FindOpenLeadByPhone(ctx, storage.FindOpenLeadByPhoneParams{
-			ProfileID:    conv.ProfileID,
-			ContactPhone: toText(phone),
-		})
-		if derr == nil && existing.Valid {
-			return s.q.SetConversationLead(ctx, storage.SetConversationLeadParams{
-				ID: conv.ID, LeadID: existing,
-			})
-		}
-	}
-
-	stageID, serr := s.q.GetLeadStartStage(ctx, conv.ProfileID)
-	if serr != nil || !stageID.Valid {
-		return serr
-	}
-
-	// data + контакт из активных фактов.
-	facts, _ := s.q.ListConversationFacts(ctx, conv.ID)
-	data := map[string]json.RawMessage{}
-	var name, email string
-	for _, f := range facts {
-		if len(f.FieldValue) > 0 {
-			data[f.FieldKey] = json.RawMessage(f.FieldValue)
-		}
-		switch f.FieldKey {
-		case "name":
-			name = jsonbToString(f.FieldValue)
-		case "email":
-			email = jsonbToString(f.FieldValue)
-		case "phone":
-			if phone == "" {
-				phone = jsonbToString(f.FieldValue)
-			}
-		}
-	}
-	dataJSON, _ := json.Marshal(data)
-
-	leadID, ierr := s.q.InsertLeadAuto(ctx, storage.InsertLeadAutoParams{
-		ProfileID:            conv.ProfileID,
-		StageID:              stageID,
-		Title:                toText(name),
-		ContactName:          toText(name),
-		ContactPhone:         toText(phone),
-		ContactEmail:         toText(email),
-		SourceAgentID:        conv.AgentID,
-		SourceConversationID: conv.ID,
-		Data:                 dataJSON,
-		Summary:              toText(ins.ShortSummary),
-		Sentiment:            toText(ins.Sentiment),
-		PrimaryIntent:        toText(ins.PrimaryIntent),
+	return maybeCreateAutoLead(ctx, s.q, conv, autoLeadMetadata{
+		Name:          ins.ContactExtracted["name"],
+		Phone:         ins.ContactExtracted["phone"],
+		Email:         ins.ContactExtracted["email"],
+		Summary:       ins.ShortSummary,
+		Sentiment:     ins.Sentiment,
+		PrimaryIntent: ins.PrimaryIntent,
 	})
-	if ierr != nil {
-		return ierr
-	}
-	return s.q.SetConversationLead(ctx, storage.SetConversationLeadParams{ID: conv.ID, LeadID: leadID})
 }
 
 // writeFacts апсертит факты диалога из результатов insights (контакт + поля

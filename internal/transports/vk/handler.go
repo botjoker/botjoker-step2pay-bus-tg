@@ -98,11 +98,16 @@ func (m *Manager) process(ctx context.Context, channelID uuid.UUID, ch Channel, 
 	// VK без edit — копим и шлём одним сообщением.
 	var acc strings.Builder
 	var formURL string
+	formRequested := false
 	formSent := false
 	for ev := range stream {
 		if ev.Type == llm.EventText {
-			acc.WriteString(ev.Text)
+			if !formRequested {
+				acc.WriteString(ev.Text)
+			}
 		} else if ev.Type == llm.EventToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "request_form" {
+			formRequested = true
+			acc.Reset()
 			formURL, _ = ev.ToolCall.Arguments["secure_form_url"].(string)
 			if formURL != "" && ev.Text != "" {
 				formSent = m.sendMessageWithForm(ctx, ch, obj.Message.PeerID, ev.Text, formURL) == nil

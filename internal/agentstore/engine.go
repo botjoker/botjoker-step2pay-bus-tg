@@ -24,7 +24,7 @@ type EventSink interface {
 	PublishEvent(ctx context.Context, convID uuid.UUID, evType, text, tool, errStr string) error
 }
 
-const intakeCollectionNotice = "Чтобы продолжить, нужно собрать данные. Заполните защищённую форму: ответы сохранятся отдельно от переписки, а телефон и email не попадут в AI. Перед отправкой потребуется согласие на обработку персональных данных."
+const intakeCollectionNotice = "Отлично! Оставьте контакт, чтобы менеджер мог связаться с вами."
 
 func addIntakeCollectionNotice(ev llm.StreamEvent) llm.StreamEvent {
 	if ev.Type == llm.EventToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "request_form" {
@@ -204,9 +204,12 @@ func (e *Engine) ConsentDocument(ctx context.Context, conversationID uuid.UUID) 
 	}
 	return api.ConsentDocument{
 		Title:   "Согласие на обработку персональных данных",
-		Version: "pd-processing-v1",
-		Body: "Я свободно, своей волей и в своём интересе даю согласие на обработку предоставленных мной персональных данных для обработки обращения, обратной связи и оказания запрошенных услуг.\n\n" +
-			"Обработка может включать сбор, запись, систематизацию, хранение, уточнение, использование и удаление данных. Согласие действует до достижения целей обработки или его отзыва. Отозвать согласие можно, обратившись к владельцу сервиса.",
+		Version: "pd-processing-v2",
+		Body: "Я даю согласие Индивидуальный предприниматель Уруев Артем Сергеевич, далее — Оператор, на обработку предоставленных мной персональных данных: номера телефона и/или адреса электронной почты.\n\n" +
+			"Цель обработки — обработка моего обращения, обратная связь, проведение консультации или демонстрации продуктов Самба.\n\n" +
+			"Оператор может осуществлять сбор, запись, систематизацию, хранение, уточнение, использование и удаление персональных данных в объёме, необходимом для указанных целей.\n\n" +
+			"Согласие действует до достижения целей обработки или до его отзыва. Отозвать согласие можно, направив обращение на info@sambacrm.pro.\n\n" +
+			"Подробнее об обработке и защите персональных данных — в Политике обработки персональных данных.",
 	}, nil
 }
 
@@ -315,6 +318,9 @@ func (e *Engine) SubmitIntake(ctx context.Context, conversationID uuid.UUID, sub
 		UserAgent:      submission.UserAgent,
 	}); err != nil {
 		return err
+	}
+	if err := maybeCreateAutoLead(ctx, e.q, conv, autoLeadMetadata{}); err != nil {
+		slog.Warn("intake form: auto-create lead failed", "conversation", conversationID, "err", err)
 	}
 	return nil
 }

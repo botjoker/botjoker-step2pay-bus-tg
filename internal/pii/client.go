@@ -93,6 +93,8 @@ var (
 	reCard        = regexp.MustCompile(`\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b`)
 	rePhoneRU     = regexp.MustCompile(`(?:\+7[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2}|\b8[ \-]?\(?\d{3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2})\b`)
 	rePhoneDigits = regexp.MustCompile(`\b\d{10,15}\b`)
+	reVKLink      = regexp.MustCompile(`(?i)(?:https?://)?(?:www\.)?vk\.com/[a-zA-Z0-9_.-]+`)
+	reVKHandle    = regexp.MustCompile(`@[a-zA-Z][a-zA-Z0-9_.-]{2,}`)
 	reSNILS       = regexp.MustCompile(`\b\d{3}-\d{3}-\d{3} ?\d{2}\b`)
 	rePassp       = regexp.MustCompile(`\b\d{4} \d{6}\b`)
 	// ИНН маскируем только при явной подписи. Первая группа сохраняет пробел
@@ -121,6 +123,8 @@ func localRegexRedact(text string) (string, []RedactionEntry) {
 	// Более специфичные идентификаторы применяем до телефона, чтобы числовой
 	// идентификатор с явной подписью не превратился в контакт.
 	apply(reEmail, "email", "[EMAIL]")
+	apply(reVKLink, "vk", "[VK]")
+	apply(reVKHandle, "vk", "[VK]")
 	apply(reCard, "card", "[CARD]")
 	apply(reSNILS, "snils", "[SNILS]")
 	apply(rePassp, "passport", "[PASSPORT]")

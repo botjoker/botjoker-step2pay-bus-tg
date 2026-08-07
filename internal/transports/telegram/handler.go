@@ -74,6 +74,7 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 		acc        strings.Builder
 		formURL    string
 		formNotice string
+		formShown  bool
 		done       = make(chan struct{})
 	)
 
@@ -84,13 +85,10 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 		text := acc.String()
 		secureFormURL := formURL
 		collectionNotice := formNotice
+		collectionShown := formShown
 		mu.Unlock()
-		if secureFormURL != "" && collectionNotice != "" {
-			if text == "" {
-				text = collectionNotice
-			} else {
-				text = collectionNotice + "\n\n" + text
-			}
+		if collectionShown && secureFormURL != "" && collectionNotice != "" {
+			text = collectionNotice
 		}
 		if text == "" {
 			return
@@ -153,7 +151,9 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 		switch ev.Type {
 		case llm.EventText:
 			mu.Lock()
-			acc.WriteString(ev.Text)
+			if !formShown {
+				acc.WriteString(ev.Text)
+			}
 			mu.Unlock()
 		case llm.EventToolCall:
 			if ev.ToolCall != nil && ev.ToolCall.Name == "request_form" {
@@ -161,6 +161,8 @@ func (m *Manager) streamToChat(bot *tele.Bot, chat *tele.Chat, stream <-chan llm
 					mu.Lock()
 					formURL = raw
 					formNotice = ev.Text
+					formShown = true
+					acc.Reset()
 					mu.Unlock()
 					flush(false)
 				}

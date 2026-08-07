@@ -40,7 +40,7 @@
   }
   var uid = getUID();
 
-  var state = { open: false, token: null, streaming: false, messages: [], es: null, form: null, formNotice: "" };
+  var state = { open: false, token: null, streaming: false, messages: [], es: null, form: null };
 
   var root = document.createElement("div");
   document.body.appendChild(root);
@@ -107,9 +107,6 @@
       }
       html += '<div class="scw-msg ' + cls + '">' + pre + esc(m.content) + "</div>";
     }
-    if (state.formNotice) {
-      html += '<div class="scw-msg scw-ai scw-intake-notice">' + esc(state.formNotice) + '</div>';
-    }
     if (state.form) html += renderForm(state.form);
     box.innerHTML = html;
     bindForm();
@@ -118,11 +115,10 @@
 
   function renderForm(form) {
     if (form.saved) {
-      return '<div class="scw-form scw-form-saved"><strong>Данные сохранены</strong>' +
-        '<span>Телефон и email не отправлялись AI-помощнику.</span></div>';
+      return '<div class="scw-form scw-form-saved"><strong>Спасибо! Контакт отправлен менеджеру.</strong></div>';
     }
-    var html = '<form class="scw-form"><strong>Заполните данные</strong>' +
-      '<span class="scw-form-note">Ответы сохранятся отдельно от переписки. Телефон и email не попадут в AI.</span>';
+    var html = '<form class="scw-form"><strong>Заполните данные для связи</strong>' +
+      '<span class="scw-form-note">Менеджер свяжется с вами в ближайшее время.</span>';
     for (var i = 0; i < form.fields.length; i++) {
       var f = form.fields[i];
       var value = form.values[f.key] == null ? "" : String(form.values[f.key]);
@@ -144,18 +140,18 @@
         var type = f.type === "phone" ? "tel" : f.type === "email" ? "email" : f.type === "number" ? "number" : f.type === "date" ? "date" : "text";
         html += '<input data-field="' + esc(f.key) + '" type="' + type + '" value="' + esc(value) + '"' + (f.required ? " required" : "") + ' />';
       }
-      if (f.why) html += '<small>' + esc(f.why) + '</small>';
+      if (f.why && f.type !== "phone" && f.type !== "email" && f.type !== "vk") html += '<small>' + esc(f.why) + '</small>';
       html += '</label>';
     }
     var privacyURL = form.consent && form.consent.privacy_url
       ? new URL(form.consent.privacy_url, new URL(apiBase, window.location.href)).href
       : "";
     html += '<label class="scw-consent"><input class="scw-consent-check" type="checkbox" required' +
-      (form.consentGranted ? " checked" : "") + '><span>Предоставляя свои контактные данные, я даю согласие на их обработку' +
-      (privacyURL ? ' в соответствии с <a href="' + esc(privacyURL) + '" target="_blank" rel="noopener noreferrer">политикой конфиденциальности</a>' : '') +
+      (form.consentGranted ? " checked" : "") + '><span>Я согласен на ' +
+      (privacyURL ? '<a href="' + esc(privacyURL) + '" target="_blank" rel="noopener noreferrer">обработку персональных данных</a>' : 'обработку персональных данных') +
       '.</span></label>';
     if (form.error) html += '<span class="scw-form-error" role="alert">' + esc(form.error) + '</span>';
-    html += '<button type="submit"' + (form.submitting ? " disabled" : "") + '>' + (form.submitting ? "Сохраняем…" : "Сохранить") + '</button></form>';
+    html += '<button type="submit"' + (form.submitting ? " disabled" : "") + '>' + (form.submitting ? "Отправляем…" : "Отправить") + '</button></form>';
     return html;
   }
 
@@ -276,7 +272,10 @@
           var last = state.messages[state.messages.length - 1];
           if (last && last.role === "assistant") { last.content += ev.text; renderMessages(); }
         } else if (ev.type === "tool_call" && ev.tool === "request_form") {
-          state.formNotice = ev.text || "Чтобы продолжить, нужно собрать данные. Заполните защищённую форму ниже: телефон и email не попадут в AI. Перед отправкой потребуется согласие на обработку персональных данных.";
+          var notice = ev.text || "Отлично! Оставьте контакт, чтобы менеджер мог связаться с вами.";
+          var lastMessage = state.messages[state.messages.length - 1];
+          if (lastMessage && lastMessage.role === "assistant") lastMessage.content = notice;
+          else state.messages.push({ role: "assistant", content: notice });
           renderMessages();
           loadForm();
         } else if (ev.type === "operator" && ev.text) {

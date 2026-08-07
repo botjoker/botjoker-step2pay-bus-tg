@@ -39,6 +39,8 @@ func validateAndNormalize(val string, fieldInfo *storage.AgentIntakeField) (stri
 		return normalizePhone(val)
 	case "email":
 		return normalizeEmail(val)
+	case "vk":
+		return normalizeVK(val)
 	case "number":
 		return normalizeNumber(val)
 	case "boolean":
@@ -89,6 +91,8 @@ func expectedFormat(fieldInfo *storage.AgentIntakeField) string {
 		return "телефон в формате +7XXXXXXXXXX или 8XXXXXXXXXX"
 	case "email":
 		return "email вида user@example.com"
+	case "vk":
+		return "ссылка vk.com/username или @username"
 	case "number":
 		return "число, например 1234 или 1234.56"
 	case "boolean":
@@ -105,7 +109,7 @@ func expectedFormat(fieldInfo *storage.AgentIntakeField) string {
 }
 
 var piiMasks = map[string]struct{}{
-	"[PHONE]": {}, "[EMAIL]": {}, "[CARD]": {},
+	"[PHONE]": {}, "[EMAIL]": {}, "[VK]": {}, "[CARD]": {},
 	"[SNILS]": {}, "[PASSPORT]": {}, "[INN]": {},
 }
 
@@ -151,6 +155,31 @@ func normalizeEmail(s string) (string, error) {
 		return "", fmt.Errorf("некорректный email: %w", err)
 	}
 	return strings.ToLower(addr.Address), nil
+}
+
+func normalizeVK(s string) (string, error) {
+	value := strings.TrimSpace(s)
+	for _, prefix := range []string{"https://", "http://"} {
+		value = strings.TrimPrefix(strings.ToLower(value), prefix)
+	}
+	value = strings.TrimPrefix(value, "www.")
+	value = strings.TrimPrefix(value, "vk.com/")
+	value = strings.TrimPrefix(value, "@")
+	value = strings.Trim(value, "/")
+	if len(value) < 3 || len(value) > 64 {
+		return "", errors.New("VK должен содержать от 3 до 64 символов")
+	}
+	if !strings.HasPrefix(value, "id") && !strings.ContainsFunc(value, func(r rune) bool {
+		return unicode.IsLetter(r)
+	}) {
+		return "", errors.New("некорректный идентификатор VK")
+	}
+	for _, r := range value {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '.' && r != '-' {
+			return "", errors.New("некорректный идентификатор VK")
+		}
+	}
+	return "https://vk.com/" + value, nil
 }
 
 func normalizeNumber(s string) (string, error) {

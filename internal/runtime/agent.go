@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const intakeCollectionNotice = "Отлично! Оставьте контакт, чтобы менеджер мог связаться с вами."
+
 // Agent — исполняемый экземпляр агента: конфигурация + LLM-провайдер + набор
 // инжектируемых зависимостей. Создаётся через NewAgent (factory.go).
 type Agent struct {
@@ -192,6 +194,12 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 
 		assistantText, toolCalls, tokensIn, tokensOut := drainStream(stream, out)
 		latencyMs := time.Since(start).Milliseconds()
+		formRequested := hasToolCall(toolCalls, "request_form")
+		if formRequested {
+			// Сохраняем в истории тот же короткий текст, который показывает интерфейс,
+			// вместо произвольной подводки модели перед вызовом защищённой формы.
+			assistantText = intakeCollectionNotice
+		}
 
 		// Записать assistant-message.
 		assistantMsgID, _ := a.recorder.Record(ctx, RecordedMessage{
@@ -224,11 +232,26 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 
 		// Выполнить tool-calls и добавить результаты в контекст.
 		results := a.execTools(ctx, convID, assistantMsgID, toolCalls, out)
+		if formRequested {
+			// Форма является финальным действием хода. Дополнительная итерация модели
+			// создавала второе сообщение после уже показанной формы.
+			out <- llm.StreamEvent{Type: llm.EventDone, TokensIn: tokensIn, TokensOut: tokensOut}
+			return
+		}
 		msgs = appendAssistantWithTools(msgs, assistantText, toolCalls)
 		msgs = appendToolResults(msgs, results)
 	}
 
 	a.emitError(out, fmt.Errorf("max iterations (%d) exceeded", maxIter))
+}
+
+func hasToolCall(calls []llm.ToolCall, name string) bool {
+	for i := range calls {
+		if calls[i].Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // execTools выполняет все tool-calls последовательно, эмитит tool_call события,

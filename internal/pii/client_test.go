@@ -17,6 +17,8 @@ func TestRegexRedact(t *testing.T) {
 		gone string // подстрока, которой быть НЕ должно
 	}{
 		{"email", "пиши на ivan@mail.ru сегодня", "[EMAIL]", "ivan@mail.ru"},
+		{"vk link", "мой профиль https://vk.com/ivan.petrov", "[VK]", "vk.com/ivan.petrov"},
+		{"vk handle", "напишите мне @ivan_petrov", "[VK]", "@ivan_petrov"},
 		{"phone +7", "мой номер +7 (999) 123-45-67 звоните", "[PHONE]", "999"},
 		{"phone 8", "тел 8 999 123 45 67", "[PHONE]", "123"},
 		{"card", "карта 4276 3800 1234 5678 оплата", "[CARD]", "4276"},

@@ -77,17 +77,18 @@ type RAGSearchRequest struct {
 
 // IntakeField — поле опросника (из agent_intake_fields).
 type IntakeField struct {
-	Key        string
-	Label      string
-	Type       string
-	Required   bool
-	WhyWeAsk   string
-	AskPriority int
+	Key             string
+	Label           string
+	Type            string
+	Required        bool
+	WhyWeAsk        string
+	ElicitationHint string
+	AskPriority     int
 }
 
 // ContactCaptureRequest — параметры «заведомого захвата» контактов, найденных
 // PII-редактором в сообщении пользователя. Работает поверх схемы опросника:
-// значения пишутся только в поля с семантическим field_type (phone/email).
+// значения пишутся только в поля с семантическим field_type (phone/email/vk).
 // Это гарантирует сбор контакта даже если LLM во время диалога промахнётся
 // с tool-call record_intake_fact.
 type ContactCaptureRequest struct {
@@ -143,17 +144,17 @@ type ToolExecCtx struct {
 
 // RecordedMessage — что записываем в agent_messages.
 type RecordedMessage struct {
-	ConversationID   uuid.UUID
-	ProfileID        uuid.UUID
-	Role             string
-	Content          string
-	ContentOriginal  string
-	ToolCalls        []llm.ToolCall
-	ToolCallID       string
-	TokensIn         int
-	TokensOut        int
-	CostUSD          float64
-	LatencyMs        int64
+	ConversationID    uuid.UUID
+	ProfileID         uuid.UUID
+	Role              string
+	Content           string
+	ContentOriginal   string
+	ToolCalls         []llm.ToolCall
+	ToolCallID        string
+	TokensIn          int
+	TokensOut         int
+	CostUSD           float64
+	LatencyMs         int64
 	LLMModel          string
 	LLMProvider       string
 	ResponseLanguage  string

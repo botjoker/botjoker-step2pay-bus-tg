@@ -29,12 +29,13 @@ func (s *DBIntake) LoadSchema(ctx context.Context, agentID uuid.UUID) ([]runtime
 	out := make([]runtime.IntakeField, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, runtime.IntakeField{
-			Key:         r.FieldKey,
-			Label:       r.FieldLabel,
-			Type:        r.FieldType,
-			Required:    r.IsRequired,
-			WhyWeAsk:    fromText(r.WhyWeAsk),
-			AskPriority: int(r.AskPriority),
+			Key:             r.FieldKey,
+			Label:           r.FieldLabel,
+			Type:            r.FieldType,
+			Required:        r.IsRequired,
+			WhyWeAsk:        fromText(r.WhyWeAsk),
+			ElicitationHint: fromText(r.ElicitationHint),
+			AskPriority:     int(r.AskPriority),
 		})
 	}
 	return out, nil
@@ -79,8 +80,8 @@ func (s *DBIntake) LoadPreviousFacts(ctx context.Context, agentID, convID uuid.U
 }
 
 // CaptureFromRedaction — «заведомый захват» контактов: если PII-редактор нашёл
-// в сообщении телефон/email — сразу пишем факт в те поля опросника, чьи
-// field_type совпадают с семантическим типом сущности (phone/email). Значение
+// в сообщении телефон/email/VK — сразу пишем факт в те поля опросника, чьи
+// field_type совпадают с семантическим типом сущности (phone/email/vk). Значение
 // берётся из RedactionEntry.Original — реального (не маскированного) текста.
 // Не трогает verified факты и не перезаписывает, если значение не изменилось.
 func (s *DBIntake) CaptureFromRedaction(ctx context.Context, req runtime.ContactCaptureRequest) error {
@@ -140,7 +141,11 @@ func (s *DBIntake) CaptureFromRedaction(ctx context.Context, req runtime.Contact
 			}
 		}
 
-		valueJSON, err := json.Marshal(e.Original)
+		value := e.Original
+		if normalized, normalizeErr := validateAndNormalize(e.Original, &field); normalizeErr == nil {
+			value = normalized
+		}
+		valueJSON, err := json.Marshal(value)
 		if err != nil {
 			continue
 		}

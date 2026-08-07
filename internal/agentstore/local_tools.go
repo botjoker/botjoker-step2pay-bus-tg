@@ -127,6 +127,8 @@ func (r *DBToolRegistry) recordIntakeFact(ctx context.Context, ec runtime.ToolEx
 			responseValue = "[PHONE]"
 		case "email":
 			responseValue = "[EMAIL]"
+		case "vk":
+			responseValue = "[VK]"
 		}
 	}
 	resp := map[string]any{
@@ -180,6 +182,8 @@ func (r *DBToolRegistry) getIntakeStatus(ctx context.Context, ec runtime.ToolExe
 			value = "[PHONE]"
 		case "email":
 			value = "[EMAIL]"
+		case "vk":
+			value = "[VK]"
 		}
 		collected[f.FieldKey] = value
 	}
