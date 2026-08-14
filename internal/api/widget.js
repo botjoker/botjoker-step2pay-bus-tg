@@ -19,6 +19,12 @@
   var color = script.dataset.color || "#7c3aed";
   var position = script.dataset.position === "left" ? "left" : "right";
   var greeting = script.dataset.greeting || "";
+  var imageURL = script.dataset.image || "";
+  var autoOpenSeconds = Math.min(60, Math.max(0, Number(script.dataset.autoOpen) || 0));
+  var autoOpenKey = "scw:auto-opened:" + agentSlug;
+  function markAutoOpened() {
+    try { sessionStorage.setItem(autoOpenKey, "1"); } catch (_) {}
+  }
   // apiBase: data-api или хост, с которого загружен сам скрипт.
   var apiBase = script.dataset.api || new URL(script.src).origin;
 
@@ -53,12 +59,15 @@
   var bubble = document.createElement("button");
   bubble.className = "scw-bubble";
   bubble.setAttribute("aria-label", "Открыть чат");
-  bubble.textContent = "💬";
+  bubble.innerHTML = imageURL ? '<img src="' + esc(imageURL) + '" alt="" />' : "💬";
   bubble.onclick = function () {
     state.open = !state.open;
     // При открытии подключаем SSE заранее: оператор сможет написать клиенту даже
     // до того, как тот отправит первое сообщение (find-or-create диалога по uid).
-    if (state.open) ensureSession();
+    if (state.open) {
+      markAutoOpened();
+      ensureSession();
+    }
     render();
   };
   shadow.appendChild(bubble);
@@ -71,7 +80,9 @@
     win.style.display = state.open ? "flex" : "none";
     if (!state.open) return;
     win.innerHTML =
-      '<div class="scw-header"><span>AI-помощник</span><button class="scw-close" aria-label="Закрыть">✕</button></div>' +
+      '<div class="scw-header"><span class="scw-title">' +
+        (imageURL ? '<img src="' + esc(imageURL) + '" alt="" />' : '') +
+        '<span>AI-помощник</span></span><button class="scw-close" aria-label="Закрыть">✕</button></div>' +
       '<div class="scw-msgs"></div>' +
       '<div class="scw-row"><input class="scw-inp" placeholder="Сообщение…"/><button class="scw-send">→</button></div>';
     shadow.querySelector(".scw-close").onclick = function () { state.open = false; render(); };
@@ -140,7 +151,7 @@
         var type = f.type === "phone" ? "tel" : f.type === "email" ? "email" : f.type === "number" ? "number" : f.type === "date" ? "date" : "text";
         html += '<input data-field="' + esc(f.key) + '" type="' + type + '" value="' + esc(value) + '"' + (f.required ? " required" : "") + ' />';
       }
-      if (f.why && f.type !== "phone" && f.type !== "email" && f.type !== "vk") html += '<small>' + esc(f.why) + '</small>';
+      if (f.why) html += '<small>' + esc(f.why) + '</small>';
       html += '</label>';
     }
     var privacyURL = form.consent && form.consent.privacy_url
@@ -307,8 +318,10 @@
     return (
       ":host{all:initial}" +
       ".scw-bubble{position:fixed;" + pos + ":24px;bottom:24px;width:56px;height:56px;border-radius:50%;background:" + c + ";color:#fff;border:none;box-shadow:0 4px 20px rgba(0,0,0,.2);cursor:pointer;font-size:24px;z-index:999999}" +
+      ".scw-bubble img{width:100%;height:100%;display:block;object-fit:cover;border-radius:50%}" +
       ".scw-window{position:fixed;" + pos + ":24px;bottom:96px;width:360px;height:560px;max-height:80vh;background:#fff;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.2);display:none;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,Roboto,sans-serif;z-index:999999}" +
       ".scw-header{padding:12px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;font-weight:600}" +
+      ".scw-title{display:flex;align-items:center;gap:9px}.scw-title img{width:32px;height:32px;object-fit:cover;border-radius:50%}" +
       ".scw-close{background:none;border:none;cursor:pointer;font-size:18px}" +
       ".scw-msgs{flex:1;overflow-y:auto;padding:16px}" +
       ".scw-msg{margin-bottom:8px;padding:8px 12px;border-radius:12px;max-width:80%;word-wrap:break-word;white-space:pre-wrap}" +
@@ -333,4 +346,17 @@
   }
 
   render();
+  if (autoOpenSeconds > 0) {
+    var alreadyOpened = false;
+    try { alreadyOpened = sessionStorage.getItem(autoOpenKey) === "1"; } catch (_) {}
+    if (!alreadyOpened) {
+      window.setTimeout(function () {
+        if (state.open) return;
+        state.open = true;
+        markAutoOpened();
+        ensureSession();
+        render();
+      }, autoOpenSeconds * 1000);
+    }
+  }
 })();

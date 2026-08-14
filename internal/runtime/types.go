@@ -49,6 +49,9 @@ type RunRequest struct {
 	ConversationID uuid.UUID
 	UserMessage    string
 	Attachments    []llm.Attachment
+	// HistoryOverride используется stateless-клиентами вроде admin playground,
+	// у которых нет реальной записи agent_conversations в БД.
+	HistoryOverride []llm.Message
 }
 
 // --- доменные структуры ---
@@ -188,6 +191,9 @@ type PIIClient interface {
 type IntakeStore interface {
 	LoadSchema(ctx context.Context, agentID uuid.UUID) ([]IntakeField, error)
 	LoadFacts(ctx context.Context, convID uuid.UUID) ([]Fact, error)
+	// IsCompleted означает, что пользователь уже успешно отправил защищённую
+	// форму. После этого необязательные поля не должны вызывать форму повторно.
+	IsCompleted(ctx context.Context, convID uuid.UUID) (bool, error)
 	// CaptureFromRedaction — записать факты по результатам PII-редакции.
 	// Best-effort: ошибка не должна валить обработку сообщения.
 	CaptureFromRedaction(ctx context.Context, req ContactCaptureRequest) error

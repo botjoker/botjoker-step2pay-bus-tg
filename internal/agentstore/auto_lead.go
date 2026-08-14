@@ -14,6 +14,7 @@ type autoLeadMetadata struct {
 	Name          string
 	Phone         string
 	Email         string
+	ContactExtra  string
 	Summary       string
 	Sentiment     string
 	PrimaryIntent string
@@ -33,10 +34,6 @@ func maybeCreateAutoLead(
 	if err != nil || !auto {
 		return err
 	}
-	if conv.LeadID.Valid {
-		return nil
-	}
-
 	facts, err := q.ListConversationFacts(ctx, conv.ID)
 	if err != nil {
 		return err
@@ -53,6 +50,7 @@ func maybeCreateAutoLead(
 	name := strings.TrimSpace(meta.Name)
 	phone := strings.TrimSpace(meta.Phone)
 	email := strings.TrimSpace(meta.Email)
+	contactExtra := strings.TrimSpace(meta.ContactExtra)
 	for _, fact := range facts {
 		if len(fact.FieldValue) > 0 {
 			data[fact.FieldKey] = json.RawMessage(fact.FieldValue)
@@ -71,7 +69,17 @@ func maybeCreateAutoLead(
 			if email == "" {
 				email = value
 			}
+		case fact.FieldKey == "vk" || fieldTypes[fact.FieldKey] == "vk":
+			if contactExtra == "" {
+				contactExtra = value
+			}
 		}
+	}
+	if conv.LeadID.Valid {
+		if contactExtra == "" {
+			return nil
+		}
+		return q.SetLeadContactExtraIfEmpty(ctx, conv.ProfileID, conv.LeadID, toText(contactExtra))
 	}
 	if normalized, normalizeErr := normalizePhone(phone); normalizeErr == nil {
 		phone = normalized
@@ -86,6 +94,11 @@ func maybeCreateAutoLead(
 			ContactPhone: toText(phone),
 		})
 		if findErr == nil && existing.Valid {
+			if contactExtra != "" {
+				if updateErr := q.SetLeadContactExtraIfEmpty(ctx, conv.ProfileID, existing, toText(contactExtra)); updateErr != nil {
+					return updateErr
+				}
+			}
 			return q.SetConversationLead(ctx, storage.SetConversationLeadParams{
 				ID: conv.ID, LeadID: existing,
 			})
@@ -106,13 +119,14 @@ func maybeCreateAutoLead(
 	if err != nil {
 		return err
 	}
-	leadID, err := q.InsertLeadAuto(ctx, storage.InsertLeadAutoParams{
+	leadID, err := q.InsertLeadAutoWithExtra(ctx, storage.InsertLeadAutoWithExtraParams{
 		ProfileID:            conv.ProfileID,
 		StageID:              stageID,
 		Title:                toText(name),
 		ContactName:          toText(name),
 		ContactPhone:         toText(phone),
 		ContactEmail:         toText(email),
+		ContactExtra:         toText(contactExtra),
 		SourceAgentID:        conv.AgentID,
 		SourceConversationID: conv.ID,
 		Data:                 dataJSON,

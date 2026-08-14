@@ -57,6 +57,23 @@ func (s *DBIntake) LoadFacts(ctx context.Context, convID uuid.UUID) ([]runtime.F
 	return out, nil
 }
 
+func (s *DBIntake) IsCompleted(ctx context.Context, convID uuid.UUID) (bool, error) {
+	conv, err := s.q.GetAgentConversation(ctx, toUUID(convID))
+	if err != nil {
+		return false, err
+	}
+	var state struct {
+		ContactReceived bool `json:"contact_received"`
+	}
+	if len(conv.Context) == 0 {
+		return false, nil
+	}
+	if err := json.Unmarshal(conv.Context, &state); err != nil {
+		return false, err
+	}
+	return state.ContactReceived, nil
+}
+
 // LoadPreviousFacts — cross-conversation memory. Требует sqlc-регенерации
 // (make sqlc) после добавления ListPreviousFactsForContact в queries.sql.
 func (s *DBIntake) LoadPreviousFacts(ctx context.Context, agentID, convID uuid.UUID) ([]runtime.PreviousFact, error) {

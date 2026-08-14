@@ -17,8 +17,14 @@ import (
 func detachedContext() context.Context { return context.Background() }
 
 type internalTestRequest struct {
-	AgentID string `json:"agent_id"`
-	Message string `json:"message"`
+	AgentID string                `json:"agent_id"`
+	Message string                `json:"message"`
+	History []internalTestMessage `json:"history"`
+}
+
+type internalTestMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 // handleInternalTest — admin playground: прогон одного сообщения, ответ стримом SSE.
@@ -38,7 +44,21 @@ func (s *Server) handleInternalTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, err := s.engine.Test(r.Context(), agentID, req.Message)
+	history := make([]llm.Message, 0, len(req.History))
+	start := 0
+	if len(req.History) > 20 {
+		start = len(req.History) - 20
+	}
+	for _, item := range req.History[start:] {
+		role := llm.Role(item.Role)
+		if role != llm.RoleUser && role != llm.RoleAssistant {
+			writeError(w, http.StatusBadRequest, "bad history role")
+			return
+		}
+		history = append(history, llm.Message{Role: role, Content: item.Content})
+	}
+
+	events, err := s.engine.Test(r.Context(), agentID, req.Message, history)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

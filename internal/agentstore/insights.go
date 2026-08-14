@@ -192,6 +192,7 @@ func (s *InsightsService) maybeAutoCreateLead(ctx context.Context, conv storage.
 		Name:          ins.ContactExtracted["name"],
 		Phone:         ins.ContactExtracted["phone"],
 		Email:         ins.ContactExtracted["email"],
+		ContactExtra:  ins.ContactExtracted["vk"],
 		Summary:       ins.ShortSummary,
 		Sentiment:     ins.Sentiment,
 		PrimaryIntent: ins.PrimaryIntent,

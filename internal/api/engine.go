@@ -23,7 +23,7 @@ type Engine interface {
 
 	// Test — playground: прогон одного сообщения для агента без транспорта,
 	// возвращает канал событий напрямую.
-	Test(ctx context.Context, agentID uuid.UUID, message string) (<-chan llm.StreamEvent, error)
+	Test(ctx context.Context, agentID uuid.UUID, message string, history []llm.Message) (<-chan llm.StreamEvent, error)
 
 	// TriggerIngest ставит задачу индексации источника знаний.
 	TriggerIngest(ctx context.Context, sourceID, profileID uuid.UUID) error

@@ -34,6 +34,7 @@ type noopIntake struct{}
 
 func (noopIntake) LoadSchema(context.Context, uuid.UUID) ([]IntakeField, error) { return nil, nil }
 func (noopIntake) LoadFacts(context.Context, uuid.UUID) ([]Fact, error)         { return nil, nil }
+func (noopIntake) IsCompleted(context.Context, uuid.UUID) (bool, error)         { return false, nil }
 func (noopIntake) CaptureFromRedaction(context.Context, ContactCaptureRequest) error {
 	return nil
 }

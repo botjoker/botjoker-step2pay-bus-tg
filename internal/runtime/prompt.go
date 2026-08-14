@@ -87,7 +87,7 @@ func (a *Agent) buildMessages(intake string, chunks []RAGChunk, fewShot []FewSho
 // renderIntakeBlock формирует <intake>-блок (см. AGENTS §4.5.1):
 // собранные факты + недостающие required/optional поля + инструкция.
 // prevFacts — cross-conversation memory (клиент уже общался раньше).
-func renderIntakeBlock(fields []IntakeField, facts []Fact, prevFacts []PreviousFact) string {
+func renderIntakeBlock(fields []IntakeField, facts []Fact, prevFacts []PreviousFact, completed bool) string {
 	if len(fields) == 0 && len(prevFacts) == 0 {
 		return ""
 	}
@@ -129,6 +129,14 @@ func renderIntakeBlock(fields []IntakeField, facts []Fact, prevFacts []PreviousF
 			fmt.Fprintf(&b, "    - %s: %s%s\n", f.Key, safeFactValue(fields, f.Key, f.Value), verified)
 		}
 		b.WriteString("  </collected>\n")
+	}
+
+	if completed {
+		b.WriteString("  <form_status>contact_received</form_status>\n")
+		b.WriteString("  <how_to_use>Форма уже отправлена. Не вызывай request_form и не проси недостающие необязательные контакты. Продолжай отвечать на вопросы пользователя.</how_to_use>\n")
+		b.WriteString("  <pii_masks>Маски [PHONE], [EMAIL] и [VK] означают, что реальные данные уже получены и защищены системой. Не проси повторить их.</pii_masks>\n")
+		b.WriteString("</intake>")
+		return b.String()
 	}
 
 	var missingRequired, missingOptional []IntakeField
@@ -178,6 +186,16 @@ func renderIntakeBlock(fields []IntakeField, facts []Fact, prevFacts []PreviousF
 	b.WriteString("  </pii_masks>\n")
 	b.WriteString("</intake>")
 	return b.String()
+}
+
+func withoutTool(tools []llm.ToolDef, name string) []llm.ToolDef {
+	out := make([]llm.ToolDef, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Name != name {
+			out = append(out, tool)
+		}
+	}
+	return out
 }
 
 // safeFactValue не допускает попадания контактов из БД обратно в prompt.

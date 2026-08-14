@@ -134,6 +134,9 @@ func (e *Engine) HandleMessage(ctx context.Context, conversationID uuid.UUID, te
 	if err != nil {
 		return err
 	}
+	if !conv.IsActive {
+		return errors.New("conversation is inactive")
+	}
 	agent, err := e.buildAgent(ctx, fromUUID(conv.AgentID))
 	if err != nil {
 		return err
@@ -154,6 +157,12 @@ func (e *Engine) IntakeForm(ctx context.Context, conversationID uuid.UUID) ([]ap
 	conv, err := e.q.GetAgentConversation(ctx, toUUID(conversationID))
 	if err != nil {
 		return nil, err
+	}
+	if !conv.IsActive {
+		return nil, errors.New("conversation is inactive")
+	}
+	if contactReceived(conv.Context) {
+		return []api.IntakeFormField{}, nil
 	}
 	fields, err := e.q.ListIntakeFields(ctx, conv.AgentID)
 	if err != nil {
@@ -226,6 +235,9 @@ func (e *Engine) SubmitIntake(ctx context.Context, conversationID uuid.UUID, sub
 	conv, err := e.q.GetAgentConversation(ctx, toUUID(conversationID))
 	if err != nil {
 		return err
+	}
+	if !conv.IsActive {
+		return errors.New("conversation is inactive")
 	}
 	fields, err := e.q.ListIntakeFields(ctx, conv.AgentID)
 	if err != nil {
@@ -319,20 +331,37 @@ func (e *Engine) SubmitIntake(ctx context.Context, conversationID uuid.UUID, sub
 	}); err != nil {
 		return err
 	}
+	if err := e.q.UpdateConversationContext(ctx, storage.UpdateConversationContextParams{
+		ID:      conv.ID,
+		Column2: []byte(`{"contact_received":true}`),
+	}); err != nil {
+		return err
+	}
 	if err := maybeCreateAutoLead(ctx, e.q, conv, autoLeadMetadata{}); err != nil {
 		slog.Warn("intake form: auto-create lead failed", "conversation", conversationID, "err", err)
 	}
 	return nil
 }
 
+func contactReceived(contextJSON []byte) bool {
+	var state struct {
+		ContactReceived bool `json:"contact_received"`
+	}
+	return len(contextJSON) > 0 && json.Unmarshal(contextJSON, &state) == nil && state.ContactReceived
+}
+
 // Test — playground: возвращает канал событий напрямую (api стримит его в SSE).
-func (e *Engine) Test(ctx context.Context, agentID uuid.UUID, message string) (<-chan llm.StreamEvent, error) {
+func (e *Engine) Test(ctx context.Context, agentID uuid.UUID, message string, history []llm.Message) (<-chan llm.StreamEvent, error) {
 	agent, err := e.buildAgent(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
 	// playground: эфемерный диалог без записи транспорта.
-	return agent.Run(ctx, runtime.RunRequest{ConversationID: uuid.New(), UserMessage: message})
+	return agent.Run(ctx, runtime.RunRequest{
+		ConversationID:  uuid.New(),
+		UserMessage:     message,
+		HistoryOverride: history,
+	})
 }
 
 // StartChannelConversation резолвит канал по id и возвращает/создаёт диалог
@@ -371,6 +400,9 @@ func (e *Engine) RunConversation(ctx context.Context, convID uuid.UUID, text str
 	conv, err := e.q.GetAgentConversation(ctx, toUUID(convID))
 	if err != nil {
 		return nil, err
+	}
+	if !conv.IsActive {
+		return nil, errors.New("conversation is inactive")
 	}
 	agent, err := e.buildAgent(ctx, fromUUID(conv.AgentID))
 	if err != nil {

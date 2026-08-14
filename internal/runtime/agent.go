@@ -146,17 +146,40 @@ func (a *Agent) run(ctx context.Context, req RunRequest, out chan<- llm.StreamEv
 	intakeSchema, _ := a.intake.LoadSchema(ctx, a.cfg.AgentID)
 	facts, _ := a.intake.LoadFacts(ctx, convID)
 	prevFacts, _ := a.intake.LoadPreviousFacts(ctx, a.cfg.AgentID, convID)
-	intakeBlock := renderIntakeBlock(intakeSchema, facts, prevFacts)
+	intakeCompleted, _ := a.intake.IsCompleted(ctx, convID)
+	intakeBlock := renderIntakeBlock(intakeSchema, facts, prevFacts, intakeCompleted)
 
 	// 6. Few-shot примеры.
 	fewShot, _ := a.fewShot.Load(ctx, a.cfg.AgentID)
 
 	// 7. История диалога.
-	history, _ := a.memory.Load(ctx, convID)
+	history := req.HistoryOverride
+	if history != nil {
+		// Playground присылает историю из браузера, поэтому пользовательские
+		// реплики редактируем так же, как сообщения из обычного диалога.
+		safeHistory := make([]llm.Message, 0, len(history))
+		for _, msg := range history {
+			if msg.Role == llm.RoleUser {
+				redacted, _, err := a.pii.Redact(ctx, msg.Content)
+				if err != nil {
+					a.logger.Warn("pii redaction failed for playground history", "err", err)
+					continue
+				}
+				msg.Content = redacted
+			}
+			safeHistory = append(safeHistory, msg)
+		}
+		history = safeHistory
+	} else {
+		history, _ = a.memory.Load(ctx, convID)
+	}
 
 	// 8. Tool-use схемы (нужны до сборки промпта — определяют, инъектить ли
 	//    перечень платных документов).
 	tools, _ := a.tools.SchemasFor(ctx, a.cfg.AgentID)
+	if intakeCompleted {
+		tools = withoutTool(tools, "request_form")
+	}
 
 	// 9. Сборка messages. Вложения пробрасываем только если у агента включено зрение.
 	attach := req.Attachments
