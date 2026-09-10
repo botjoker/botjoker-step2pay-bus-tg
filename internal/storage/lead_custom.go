@@ -51,3 +51,14 @@ WHERE id = $1 AND profile_id = $2 AND is_deleted = false
   AND NULLIF(BTRIM(contact_extra), '') IS NULL`, leadID, profileID, value)
 	return err
 }
+
+func (q *Queries) MergeLeadMarketingContext(ctx context.Context, profileID, leadID pgtype.UUID, marketingContext []byte) error {
+	_, err := q.db.Exec(ctx, `
+UPDATE leads
+SET data = COALESCE(data, '{}'::jsonb) || jsonb_build_object(
+      'marketing', COALESCE(data->'marketing', '{}'::jsonb) || $3::jsonb
+    ),
+    updated_at = NOW()
+WHERE id = $1 AND profile_id = $2 AND is_deleted = false`, leadID, profileID, marketingContext)
+	return err
+}

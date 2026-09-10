@@ -75,7 +75,15 @@ func maybeCreateAutoLead(
 			}
 		}
 	}
+	marketingContext, err := channelMarketingContext(ctx, q, conv)
+	if err != nil {
+		return err
+	}
+	data["marketing"] = marketingContext
 	if conv.LeadID.Valid {
+		if err := q.MergeLeadMarketingContext(ctx, conv.ProfileID, conv.LeadID, marketingContext); err != nil {
+			return err
+		}
 		if contactExtra == "" {
 			return nil
 		}
@@ -94,6 +102,9 @@ func maybeCreateAutoLead(
 			ContactPhone: toText(phone),
 		})
 		if findErr == nil && existing.Valid {
+			if updateErr := q.MergeLeadMarketingContext(ctx, conv.ProfileID, existing, marketingContext); updateErr != nil {
+				return updateErr
+			}
 			if contactExtra != "" {
 				if updateErr := q.SetLeadContactExtraIfEmpty(ctx, conv.ProfileID, existing, toText(contactExtra)); updateErr != nil {
 					return updateErr
@@ -138,4 +149,44 @@ func maybeCreateAutoLead(
 		return err
 	}
 	return q.SetConversationLead(ctx, storage.SetConversationLeadParams{ID: conv.ID, LeadID: leadID})
+}
+
+func channelMarketingContext(ctx context.Context, q *storage.Queries, conv storage.AgentConversation) (json.RawMessage, error) {
+	channel, err := q.GetChannel(ctx, conv.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{
+		"contact_channel":    normalizeContactChannel(channel.ChannelType),
+		"channel_account_id": fromUUID(channel.ID).String(),
+		"conversation_id":    fromUUID(conv.ID).String(),
+		"external_user_id":   conv.ExternalUserID,
+	}
+	if conv.ExternalChatID.Valid {
+		result["external_chat_id"] = conv.ExternalChatID.String
+	}
+	var conversationContext map[string]any
+	if len(conv.Context) > 0 && json.Unmarshal(conv.Context, &conversationContext) == nil {
+		if event, ok := conversationContext["marketing_channel_event"].(map[string]any); ok {
+			if externalEventID, ok := event["external_event_id"].(string); ok && externalEventID != "" {
+				result["external_event_id"] = externalEventID
+			}
+			if reference, ok := event["provider_metadata_reference"]; ok {
+				result["provider_metadata_reference"] = reference
+			}
+		}
+	}
+	return json.Marshal(result)
+}
+
+func normalizeContactChannel(channelType string) string {
+	normalized := strings.ToLower(strings.TrimSpace(channelType))
+	switch normalized {
+	case "web":
+		return "samba_widget"
+	case "telegram", "vk", "max", "whatsapp", "email":
+		return normalized
+	default:
+		return "other"
+	}
 }

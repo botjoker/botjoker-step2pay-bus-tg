@@ -394,6 +394,29 @@ func (e *Engine) StartChannelConversation(ctx context.Context, channelID uuid.UU
 	return fromUUID(conv.ID), fromUUID(conv.AgentID), fromUUID(conv.ProfileID), nil
 }
 
+func (e *Engine) RecordInboundChannelEvent(
+	ctx context.Context,
+	conversationID uuid.UUID,
+	providerEventID string,
+	providerMetadata map[string]any,
+) (bool, error) {
+	providerEventID = strings.TrimSpace(providerEventID)
+	if providerEventID == "" {
+		return true, nil
+	}
+	if len(providerEventID) > 512 {
+		return false, errors.New("provider event id is too long")
+	}
+	metadata, err := json.Marshal(providerMetadata)
+	if err != nil {
+		return false, err
+	}
+	if len(metadata) > 16*1024 {
+		return false, errors.New("provider event metadata is too large")
+	}
+	return e.q.RecordInboundChannelEvent(ctx, toUUID(conversationID), providerEventID, metadata)
+}
+
 // RunConversation строит агента для диалога и возвращает поток событий
 // (транспорт сам стримит его пользователю).
 func (e *Engine) RunConversation(ctx context.Context, convID uuid.UUID, text string, attachments []llm.Attachment) (<-chan llm.StreamEvent, error) {

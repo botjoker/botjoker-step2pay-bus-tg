@@ -36,6 +36,20 @@ func (m *Manager) HandleUpdate(ctx context.Context, channelID uuid.UUID, update 
 		slog.Error("telegram: start conversation", "err", err)
 		return err
 	}
+	if recorder, ok := m.runner.(interface {
+		RecordInboundChannelEvent(context.Context, uuid.UUID, string, map[string]any) (bool, error)
+	}); ok {
+		accepted, recordErr := recorder.RecordInboundChannelEvent(ctx, convID, strconv.Itoa(update.ID), map[string]any{
+			"update_id":  update.ID,
+			"message_id": msg.ID,
+		})
+		if recordErr != nil {
+			return recordErr
+		}
+		if !accepted {
+			return nil
+		}
+	}
 
 	// Вложения (фото). В telebot.v3 нет FileURLByID — берём FilePath через
 	// FileByID и собираем публичный file-URL Telegram с токеном бота.

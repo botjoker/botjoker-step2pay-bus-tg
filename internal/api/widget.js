@@ -235,7 +235,7 @@
       fetch(apiBase + "/chat/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: token, text: text })
+        body: JSON.stringify({ token: token, text: text, request_id: crypto.randomUUID() })
       });
     });
   }

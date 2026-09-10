@@ -3,6 +3,7 @@ package vk
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -15,11 +16,13 @@ type vkCallback struct {
 	Type    string          `json:"type"`
 	Object  json.RawMessage `json:"object"`
 	GroupID int64           `json:"group_id"`
+	EventID string          `json:"event_id"`
 	Secret  string          `json:"secret"`
 }
 
 type vkMessageObject struct {
 	Message struct {
+		ID          int64  `json:"id"`
 		FromID      int64  `json:"from_id"`
 		PeerID      int64  `json:"peer_id"`
 		Text        string `json:"text"`
@@ -70,11 +73,11 @@ func (m *Manager) HandleCallback(ctx context.Context, channelID uuid.UUID, body 
 	}
 
 	// Обработка в фоне; VK ждёт быстрый "ok".
-	go m.process(context.Background(), channelID, ch, obj)
+	go m.process(context.Background(), channelID, ch, cb.EventID, obj)
 	return "ok", nil
 }
 
-func (m *Manager) process(ctx context.Context, channelID uuid.UUID, ch Channel, obj vkMessageObject) {
+func (m *Manager) process(ctx context.Context, channelID uuid.UUID, ch Channel, eventID string, obj vkMessageObject) {
 	var attach []llm.Attachment
 	for _, a := range obj.Message.Attachments {
 		if a.Type == "photo" && len(a.Photo.Sizes) > 0 {
@@ -89,6 +92,21 @@ func (m *Manager) process(ctx context.Context, channelID uuid.UUID, ch Channel, 
 	convID, _, _, err := m.runner.StartChannelConversation(ctx, channelID, externalUser, externalChat)
 	if err != nil {
 		return
+	}
+	if eventID == "" {
+		eventID = fmt.Sprintf("message:%d", obj.Message.ID)
+	}
+	if recorder, ok := m.runner.(interface {
+		RecordInboundChannelEvent(context.Context, uuid.UUID, string, map[string]any) (bool, error)
+	}); ok {
+		accepted, recordErr := recorder.RecordInboundChannelEvent(ctx, convID, eventID, map[string]any{
+			"event_id":   eventID,
+			"group_id":   ch.GroupID,
+			"message_id": obj.Message.ID,
+		})
+		if recordErr != nil || !accepted {
+			return
+		}
 	}
 	stream, err := m.runner.RunConversation(ctx, convID, obj.Message.Text, attach)
 	if err != nil {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"html"
@@ -235,8 +236,13 @@ func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 type chatMessageRequest struct {
-	Token string `json:"token"`
-	Text  string `json:"text"`
+	Token     string `json:"token"`
+	Text      string `json:"text"`
+	RequestID string `json:"request_id"`
+}
+
+type inboundChannelEventRecorder interface {
+	RecordInboundChannelEvent(context.Context, uuid.UUID, string, map[string]any) (bool, error)
 }
 
 // handleChatMessage принимает сообщение и запускает агента (события идут в SSE).
@@ -259,6 +265,23 @@ func (s *Server) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad conversation id")
 		return
+	}
+	requestID := req.RequestID
+	if requestID == "" {
+		requestID = r.Header.Get("Idempotency-Key")
+	}
+	if recorder, ok := s.engine.(inboundChannelEventRecorder); ok && requestID != "" {
+		accepted, recordErr := recorder.RecordInboundChannelEvent(r.Context(), convID, requestID, map[string]any{
+			"request_id": requestID,
+		})
+		if recordErr != nil {
+			writeError(w, http.StatusInternalServerError, "channel event recording failed")
+			return
+		}
+		if !accepted {
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+			return
+		}
 	}
 
 	// Запускаем обработку в фоне — события публикуются в SSE-хаб.
