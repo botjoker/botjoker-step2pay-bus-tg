@@ -28,7 +28,7 @@ WITH conversation AS (
          jsonb_build_object(
            'type', 'channel.inbound',
            'channel_id', conversation.channel_id,
-           'provider_event_id', $2,
+           'provider_event_id', $2::text,
            'provider_metadata_reference', $3::jsonb
          )
   FROM conversation
